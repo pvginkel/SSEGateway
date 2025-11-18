@@ -48,4 +48,7 @@ export default {
 
   // Verbose output
   verbose: true,
+
+  // Run tests serially to avoid race conditions in shared state (connections Map)
+  maxWorkers: 1,
 };
