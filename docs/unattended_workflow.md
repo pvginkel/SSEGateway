@@ -2,11 +2,12 @@
 
 ## Overview
 
-This document describes an automated workflow to do minor work that can be completed unattended by an LLM. Examples of the type of work that this workflow is useful for:
+This document describes an automated workflow to do work that can be completed unattended by an LLM. Examples of the type of work that this workflow is useful for:
 
 - Minor bug fixes where the bug is clear.
 - Cosmetic changes.
 - Simple dependency updates.
+- Work that is otherwise very clearly defined.
 
 ## Workflow Steps
 
