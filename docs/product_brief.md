@@ -1,95 +1,125 @@
-# **SSEGateway – Requirements Specification**
+# **SSEGateway – Complete Requirements Specification**
 
-## 1. Purpose
-
-The **SSEGateway** is a standalone Node-based service that:
-
-1. Accepts incoming **Server-Sent Events (SSE)** connections from clients.
-2. Notifies a Python backend when:
-
-   * A client connects
-   * A client disconnects
-3. Accepts event emission commands from the Python backend and delivers them to the corresponding SSE client.
-4. Implements full SSE stream semantics, including heartbeats and protocol formatting.
-5. Runs as an internal sidecar, behind the same reverse proxy as the Python app.
-
-The gateway **terminates the SSE connection**; it is *not* an HTTP reverse proxy.
+Version: **1.0**
+Audience: **Developers**
+Purpose: **Implement the SSEGateway sidecar service**
 
 ---
 
-## 2. High-Level Overview
+# **1. Overview**
 
-### 2.1 Responsibilities
+## **1.1 Purpose**
 
-The SSEGateway must:
+The **SSEGateway** is an internal service that:
 
-* Handle any number of SSE connections without blocking (Node’s event loop).
-* Track active connections by token.
-* Expose a single **/internal/send** endpoint for Python to:
+* Accepts and manages **Server-Sent Event (SSE)** connections from clients.
+* Notifies the Python backend about connects and disconnects.
+* Receives event instructions from the Python backend and forwards them to the corresponding SSE connection.
+* Can optionally close a connection, either alone or after sending an event.
+* Sends periodic heartbeats to keep long-lived SSE connections alive.
+* Runs as a sidecar service in the same Kubernetes Pod as the Python backend.
 
-  * Send an event
-  * Close the connection
-  * Or both in a single call
-* Send connect/disconnect callbacks to a Python endpoint (configurable).
-* Implement built-in SSE heartbeats via comments.
-* Preserve ordering of events per-connection.
-* Flush all events immediately.
-* Provide health and readiness endpoints.
-* Output plain logs.
+The SSEGateway *terminates* the SSE connection.
+It is **not** an HTTP reverse proxy.
 
-### 2.2 Non-Responsibilities
+## **1.2 Non-goals**
 
-The SSEGateway must **not**:
+The gateway does **not**:
 
-* Perform authentication or authorization.
-* Parse cookies or headers.
-* Parse or validate the incoming SSE request URL beyond separating the internal vs external path.
-* Maintain any persistent state across restarts.
-* Attempt reconnect logic on behalf of the client.
-* Buffer or batch events.
+* Authenticate or authorize clients.
+* Parse cookies or validate headers.
+* Parse or validate the request URL.
+* Persist state across restarts.
+* Support horizontal scaling.
+* Buffer events or reorder them.
+* Perform WebSocket upgrades.
 
 ---
 
-## 3. External Interfaces
+# **2. Architecture & Runtime**
 
-### 3.1 SSE Client Interface (Browser/Frontend → Gateway)
+## **2.1 Technology Stack**
 
-**Route:**
+* **Node.js 20 (LTS)**
+
+  * Required for native `fetch()`
+  * Required for stable ESM behavior
+  * Single event loop ensures ordered writes
+
+* **TypeScript 5.x**
+
+* **Module System:** ESM only
+
+  * `"type": "module"` in package.json
+  * `"module": "NodeNext"` in tsconfig
+
+* **Framework:** Express 5
+
+  * Simple SSE support
+  * Good for internal service use
+  * No compression
+
+## **2.2 Process Model**
+
+* Single Node process
+* Single-threaded event loop
+* No clustering
+* All connection state held in-memory
+
+## **2.3 Performance Target**
+
+* Thousands of concurrent SSE connections
+* Ordered delivery guaranteed by the event loop
+* Immediate flushing of all writes
+
+---
+
+# **3. Routing & Endpoints**
+
+## **3.1 SSE Endpoint (Client → Gateway)**
+
+### **Route**
 
 ```
 GET /sse/<any-path-and-query>
 ```
 
-All paths under `/sse/*` are accepted.
+### **Rules**
 
-**Behaviour:**
+* Accept **any** path under `/sse/`
+* Do not parse or validate the path or query string
+* Store the **full raw URL** in callback payload
+* Forward headers verbatim in callback payload
 
-* SSE protocol headers are returned:
+### **SSE Response Headers**
 
-  * Content-Type: text/event-stream
-  * Cache-Control: no-cache
-  * Connection: keep-alive
-  * X-Accel-Buffering: no
-* A UUID token is generated for this connection.
-* The client’s request metadata is captured:
+```
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+X-Accel-Buffering: no
+```
 
-  * Full URL including query string (unparsed)
-  * All headers (forwarded verbatim)
-  * Remote address (from Node)
-* The Python backend is notified via the callback endpoint.
-* Heartbeats are sent at interval **HeartbeatIntervalSeconds** (configurable), default **15s**.
-* Connection remains open indefinitely.
-* On disconnect (client closes or server closes), Python is notified.
+### **SSE Connection Initialization**
 
-### 3.2 Python → Gateway Interface
+* Generate a UUID token using `crypto.randomUUID()`
+* Store connection in `Map<token, ConnectionRecord>`
+* Send callback to Python with `"action": "connect"`
 
-**Route:**
+### **If callback returns non-2xx**
+
+* Immediately close SSE stream
+* Return the same HTTP status code to the client
+
+## **3.2 Python → Gateway: Send/Close Command**
+
+### **Route**
 
 ```
 POST /internal/send
 ```
 
-**Payload:**
+### **Payload**
 
 ```json
 {
@@ -102,263 +132,52 @@ POST /internal/send
 }
 ```
 
-**Rules:**
+### **Rules**
 
-* `token` is required.
-* `event` is optional.
-* `close` is optional.
-* If both `event` and `close` are provided → send event first, then close.
-* If only `close` is provided → close immediately.
-* `event.data` may contain newlines; gateway must split into multiple `data:` lines per SSE spec.
-* `event.name` becomes the SSE event name field.
-* Event delivery preserves order (guaranteed by Node’s event loop).
-* Unknown fields in the payload are ignored.
+* `token` is required
+* `event` is optional
+* `close` is optional
+* If both are given → send event first, then close
+* Unknown fields ignored
+* If token not known → respond 404
 
-### 3.3 Gateway → Python Callback
+### **Event Formatting Requirements**
 
-**ENV variable:**
+* Follow full SSE spec:
+
+  * If event name present:
+
+    ```
+    event: <name>
+    ```
+  * For event data:
+
+    * Split `data` on newline
+    * Send one `data:` line per data line
+  * End event with blank line
+
+* Immediately flush writes
+
+### **Closing the stream**
+
+* If `close = true`, terminate connection cleanly after event
+* Send disconnect callback with:
+
+  * `reason = "server_closed"`
+
+## **3.3 Gateway → Python Callback**
+
+### **Configured by environment:**
 
 ```
 CALLBACK_URL=https://python-app/sse-callback
 ```
 
-**Route:**
-POST to `{CALLBACK_URL}`
+### **Route**
 
-**Payload:**
+`POST` to the configured URL
 
-```json
-{
-  "action": "connect" | "disconnect",
-  "reason": "client_closed" | "server_closed" | "error",
-  "token": "string",
-  "request": {
-    "url": "string", 
-    "headers": { "header": "value", ... }
-  }
-}
-```
-
-**Rules:**
-
-* On **connect**:
-
-  * `action` = `"connect"`
-  * No `reason`
-* On **disconnect**:
-
-  * `action` = `"disconnect"`
-  * `reason` must reflect:
-
-    * `"client_closed"` (client terminated the connection)
-    * `"server_closed"` (Python requested closure via `/internal/send`)
-    * `"error"` (gateway crashed/errored or early termination)
-* Gateway must forward:
-
-  * The *exact* request URL including query string
-  * Headers verbatim (unchanged)
-* Any non-2xx response must:
-
-  * Abort the SSE connection immediately
-  * Pass the HTTP status code and message to the client
-  * The client is expected to retry
-
----
-
-## 4. SSE Protocol Requirements
-
-### 4.1 Formatting Rules
-
-The SSEGateway must implement the full SSE protocol:
-
-* `event: <name>` when an event name is provided.
-* `data:` repeated for each line of event data.
-* Each SSE event terminated by a blank line.
-* Newlines in `event.data` must be split into multiple `data:` lines.
-* No encoding or escaping applied to forwarded data.
-* UTF-8 output.
-* Immediate flushing after every event.
-
-### 4.2 Heartbeats
-
-* Heartbeats are mandatory, via SSE **comments**:
-
-  ```
-  : heartbeat
-  ```
-* Heartbeat interval controlled by an environment variable:
-
-  ```
-  HEARTBEAT_INTERVAL_SECONDS=15
-  ```
-* Default is **15 seconds**.
-* Changing interval must not require restart (if feasible, but not required).
-* Heartbeat comments must be flushed immediately.
-
-### 4.3 Timeouts & Reconnection
-
-* No idle timeouts; connections may remain open indefinitely.
-* Gateway does not support sending comments via `/internal/send`.
-* Gateway does not handle reconnections; client handles it.
-
----
-
-## 5. Connection Lifecycle Requirements
-
-### 5.1 On Connect
-
-* Accept SSE request.
-* Generate `token` (UUID).
-* Store `token → connection`.
-* Collect:
-
-  * full request URL (string)
-  * headers (verbatim key/value pairs)
-  * remote address
-* POST callback with `action = "connect"`.
-* If callback returns:
-
-  * **2xx** → proceed normally.
-  * **non-2xx** → immediately close SSE connection with same status.
-
-### 5.2 On Event Send
-
-* Validate that `token` exists.
-* If not found, return 404.
-* If `event` exists, send SSE event.
-* If `close = true`, close SSE after event (if any).
-* If multiple sends arrive back-to-back, preserve ordering strictly.
-
-### 5.3 On Disconnect
-
-Triggered when:
-
-* client closes the connection, or
-* `/internal/send { close: true }` instructs the gateway to close, or
-* internal errors occur.
-
-Gateway must:
-
-* Identify reason:
-
-  * client_closed
-  * server_closed
-  * error
-* POST callback with `action = "disconnect"`.
-* Delete the token from internal store.
-
-### 5.4 Restart Behavior
-
-* On gateway restart all connections are lost.
-* No state must be reloaded.
-* No callback for restarts.
-
----
-
-## 6. Routing Requirements
-
-### 6.1 Accepted Routes
-
-| Route            | Purpose                                         |
-|------------------|-------------------------------------------------|
-| `/sse/*`         | Accept client SSE connections, any path allowed |
-| `/internal/send` | Receive event/close commands from Python        |
-| `/healthz`       | Liveness check                                  |
-| `/readyz`        | Readiness check                                 |
-
-### 6.2 Routing Rules
-
-* Any path under `/sse/` is valid.
-* `/internal/*` namespace is reserved.
-* NGINX or equivalent handles external routing; gateway expects to sit behind that.
-
----
-
-## 7. Security Requirements
-
-### 7.1 Authentication
-
-* None.
-* Python is responsible for request-level authentication using forwarded headers.
-
-### 7.2 Authorization
-
-* None.
-
-### 7.3 Header Handling
-
-* All inbound headers must be forwarded as-is in callback.
-* Gateway must not inspect, parse, or modify them.
-
-### 7.4 Transport
-
-* All communication is internal; HTTPS optional but allowed.
-
----
-
-## 8. Logging
-
-* Plain console logging only.
-* Must log:
-
-  * Connect events
-  * Disconnect events
-  * Internal send errors (token not found, invalid payload)
-  * Callback failures
-
----
-
-## 9. Environment Variables
-
-| Variable                     | Default        | Description                                                                  |
-|------------------------------|----------------|------------------------------------------------------------------------------|
-| `HEARTBEAT_INTERVAL_SECONDS` | `15`           | Interval for sending SSE comment heartbeats (`: heartbeat`)                  |
-| `CALLBACK_URL`               | none, required | The Python callback endpoint. Used for connect and disconnect notifications. |
-
----
-
-## 10. Non-Functional Requirements
-
-* Must handle thousands of concurrent SSE connections.
-* Single-instance operation only (no horizontal scaling).
-* Must flush SSE output immediately (no buffering).
-* Must not require local storage or shared persistence.
-* Should run as a sidecar container in the same Kubernetes Pod as the Python service.
-
----
-
-# **11. Final Protocol Definitions**
-
-### 11.1 Send Endpoint (Python → Gateway)
-
-```
-POST /internal/send
-```
-
-```json
-{
-  "token": "string",
-  "event": {
-    "name": "string",
-    "data": "string"
-  },
-  "close": true
-}
-```
-
-* `token` required.
-* `event.name` optional.
-* `event.data` optional text (may contain `\n`).
-* `close` optional.
-* If both provided: send event then close.
-
----
-
-### 11.2 Callback Payload (Gateway → Python)
-
-```
-POST {CALLBACK_URL}
-```
+### **Payload**
 
 ```json
 {
@@ -367,11 +186,236 @@ POST {CALLBACK_URL}
   "token": "string",
   "request": {
     "url": "string",
-    "headers": {
-      "...": "..."
-    }
+    "headers": { "header": "value" }
   }
 }
 ```
 
-* `reason` included only for `disconnect`.
+### **Rules**
+
+* `reason` is **required only** for `"disconnect"`
+* `request.url` is the raw incoming URL, including query string
+* `request.headers` are the raw incoming headers
+* Best-effort:
+
+  * No retries
+  * Errors are logged only
+
+## **3.4 Health Endpoints**
+
+### **Healthz**
+
+```
+GET /healthz
+```
+
+* Always 200 unless server is in fatal state
+
+### **Readyz**
+
+```
+GET /readyz
+```
+
+* Returns 200 once:
+
+  * `CALLBACK_URL` is configured
+  * Server initialization complete
+* Otherwise 503
+
+---
+
+# **4. Connection Lifecycle**
+
+## **4.1 Connect**
+
+1. Client sends `GET /sse/...`
+2. Gateway generates `token`
+3. Gateway stores connection state
+4. Gateway POSTs callback:
+
+   ```
+   { action: "connect", token, request: {...} }
+   ```
+5. If Python returns non-2xx:
+
+   * SSE immediately terminated
+   * HTTP error returned to client
+
+## **4.2 Sending Events**
+
+* All events for a token are serialized automatically due to Node’s event loop.
+* No additional ordering logic required.
+
+## **4.3 Heartbeats**
+
+### **Format**
+
+```
+: heartbeat
+```
+
+### **Interval**
+
+* Controlled by environment variable:
+
+  ```
+  HEARTBEAT_INTERVAL_SECONDS=15
+  ```
+* Default: **15 seconds**
+
+### **Behaviour**
+
+* Sent for each active SSE connection
+* Flushed immediately
+* Not visible to Python (not in callback)
+* Always implemented internally by gateway
+
+## **4.4 Disconnect Handling**
+
+Disconnect can be triggered by:
+
+* Client closing the browser
+* Network interruption
+* Server error (write failure)
+* Python sending `close: true`
+
+### **On Disconnect**
+
+Gateway sends callback:
+
+```json
+{
+  "action": "disconnect",
+  "reason": "client_closed" | "server_closed" | "error",
+  "token": "...",
+  "request": { ... }
+}
+```
+
+### **Deletion**
+
+* After disconnect callback, token removed from memory
+
+## **4.5 Restart Behaviour**
+
+* All connections lost immediately
+* No callbacks sent
+* No state reloaded
+
+---
+
+# **5. Data Structures**
+
+## **5.1 Connection Record**
+
+Developers must implement:
+
+```ts
+interface ConnectionRecord {
+  res: express.Response;
+  request: {
+    url: string;
+    headers: Record<string, string | string[] | undefined>;
+  };
+  heartbeatTimer: NodeJS.Timeout;
+}
+```
+
+---
+
+# **6. Error Handling**
+
+## **6.1 Gateway Errors**
+
+* Log error
+* Close connection if applicable
+* Send disconnect callback if connection had been established
+
+## **6.2 Internal/Send Errors**
+
+* Unknown token → 404
+* Invalid types → 400
+* Write failure → treat as disconnect, reason `"error"`
+
+## **6.3 Callback Errors**
+
+* Log only
+* No retries
+* Do not close SSE stream for disconnect callbacks
+* Do close SSE stream if connect callback fails (per connect rules)
+
+---
+
+# **7. Security Requirements**
+
+* No authentication
+* No authorization
+* No header parsing beyond passing through to callback
+* Rely on Python and NGINX for access control
+* No modification of headers or cookies
+
+---
+
+# **8. Logging Requirements**
+
+## **8.1 Format**
+
+Plain text:
+
+```
+[INFO] message
+[ERROR] message
+```
+
+## **8.2 Events to Log**
+
+* Server startup (port, env)
+* New connection with token
+* Callback results (success/failure)
+* Event sends
+* Closing connections
+* Errors
+
+---
+
+# **9. Configuration**
+
+## **9.1 Required Environment Variables**
+
+| Variable                     | Default | Required | Description                              |
+| ---------------------------- | ------- | -------- | ---------------------------------------- |
+| `CALLBACK_URL`               | none    | Yes      | Callback endpoint for connect/disconnect |
+| `HEARTBEAT_INTERVAL_SECONDS` | `15`    | No       | Heartbeat interval per connection        |
+
+---
+
+# **10. Non-Functional Requirements**
+
+* Must run as a sidecar inside the same Kubernetes Pod as Python backend.
+* No persistence or shared state.
+* Operational correctness depends on single-instance deployment.
+* Event ordering guaranteed per token.
+* SSE output must not be compressed by gateway.
+* Flush after every write.
+
+---
+
+# **11. Summary of All Developer Decisions**
+
+| Category        | Decision                          |
+| --------------- | --------------------------------- |
+| Framework       | Express 5                         |
+| Language        | TypeScript 5                      |
+| Module System   | ESM                               |
+| Node Version    | Node 20                           |
+| Validation      | Minimal (manual)                  |
+| Ordering        | Guaranteed by event loop          |
+| Heartbeats      | Internally generated, default 15s |
+| Close Semantics | Event then close                  |
+| Persistence     | None                              |
+| Scaling         | Single instance only              |
+| Logging         | Plain text                        |
+| Headers         | Forward unchanged                 |
+| URL             | Forward raw                       |
+| Spec Compliance | Full SSE spec                     |
