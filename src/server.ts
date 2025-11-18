@@ -8,6 +8,7 @@
 import express, { Express } from 'express';
 import type { Config } from './config.js';
 import { createHealthRouter } from './routes/health.js';
+import { createSseRouter } from './routes/sse.js';
 
 /**
  * Create and configure Express application
@@ -24,6 +25,10 @@ export function createApp(config: Config): Express {
   // Register health check routes
   const healthRouter = createHealthRouter(config);
   app.use(healthRouter);
+
+  // Register SSE routes
+  const sseRouter = createSseRouter(config);
+  app.use(sseRouter);
 
   // Note: Compression middleware is NOT registered per CLAUDE.md:
   // "No Compression: SSE output must never be compressed"
