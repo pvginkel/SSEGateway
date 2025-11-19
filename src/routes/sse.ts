@@ -150,7 +150,40 @@ export function createSseRouter(config: Config): express.Router {
     // Add connection to Map (stream is now open)
     addConnection(token, connectionRecord);
 
-    logger.info(`SSE connection established: token=${token}`);
+    // Create heartbeat timer to keep connection alive
+    const heartbeatIntervalMs = config.heartbeatIntervalSeconds * 1000;
+    const heartbeatTimer = setInterval(() => {
+      // Defensive check: ensure connection still exists in Map
+      const connection = getConnection(token);
+      if (!connection) {
+        // Connection was removed - timer will be cleared by disconnect handler
+        return;
+      }
+
+      // Send heartbeat comment (SSE format: `: heartbeat\n\n`)
+      try {
+        const writeSuccess = connection.res.write(': heartbeat\n\n');
+
+        // Check for backpressure (client slow to consume)
+        if (!writeSuccess) {
+          // Backpressure detected - log but continue (best-effort heartbeat)
+          logger.info(`Heartbeat backpressure: token=${token}`);
+        }
+        // Note: Do not log routine heartbeat sends to prevent log spam
+      } catch (error) {
+        // Write failed - connection likely closed or broken
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(`Heartbeat write failed: token=${token} error=${errorMessage}`);
+        // Do not call disconnect handler here - let 'close' event handle cleanup
+      }
+    }, heartbeatIntervalMs);
+
+    // Store timer in connection record
+    connectionRecord.heartbeatTimer = heartbeatTimer;
+
+    logger.info(
+      `SSE connection established: token=${token} heartbeatInterval=${config.heartbeatIntervalSeconds}s`
+    );
   });
 
   return router;
@@ -176,9 +209,9 @@ async function handleDisconnect(
     // Connection is in Map - perform full cleanup
     const record = getConnection(token)!;
 
-    // Clear heartbeat timer if set (currently always null, future-proof)
+    // Clear heartbeat timer if set
     if (record.heartbeatTimer) {
-      clearTimeout(record.heartbeatTimer);
+      clearInterval(record.heartbeatTimer);
     }
 
     // Remove from Map

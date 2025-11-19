@@ -441,7 +441,7 @@ describe('SSE Connection Flow', () => {
       expect(connection!.request.headers).toMatchObject({
         authorization: 'Bearer token',
       });
-      expect(connection!.heartbeatTimer).toBeNull(); // Heartbeat not implemented yet
+      expect(connection!.heartbeatTimer).not.toBeNull(); // Heartbeat timer active
       expect(connection!.disconnected).toBe(false);
 
       // Abort and cleanup

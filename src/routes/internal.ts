@@ -143,7 +143,7 @@ export function createInternalRouter(config: Config): express.Router {
 
         // Cleanup connection state
         if (connection.heartbeatTimer) {
-          clearTimeout(connection.heartbeatTimer);
+          clearInterval(connection.heartbeatTimer);
         }
         removeConnection(token);
 
@@ -194,7 +194,7 @@ async function handleServerClose(
 
   // Clear heartbeat timer if set
   if (connection.heartbeatTimer) {
-    clearTimeout(connection.heartbeatTimer);
+    clearInterval(connection.heartbeatTimer);
   }
 
   // Remove from Map

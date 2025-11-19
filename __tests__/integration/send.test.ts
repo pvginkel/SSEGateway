@@ -303,9 +303,8 @@ describe('Send and Close Operations', () => {
       const connection = connections.get(token);
       expect(connection).toBeDefined();
 
-      // Note: heartbeatTimer is currently null (heartbeat feature not implemented yet)
-      // This test verifies the code handles null timer gracefully
-      expect(connection!.heartbeatTimer).toBeNull();
+      // Verify heartbeat timer is active
+      expect(connection!.heartbeatTimer).not.toBeNull();
 
       // Close connection
       await request(app)

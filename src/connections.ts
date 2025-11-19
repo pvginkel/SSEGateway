@@ -20,7 +20,7 @@ export interface ConnectionRecord {
     /** Raw headers from the request (undefined values filtered out) */
     headers: Record<string, string | string[]>;
   };
-  /** Heartbeat timer (null for this feature - actual heartbeat implementation deferred) */
+  /** Heartbeat timer for periodic SSE keep-alive comments */
   heartbeatTimer: NodeJS.Timeout | null;
   /** Flag indicating client disconnected during async callback (race condition handling) */
   disconnected: boolean;
