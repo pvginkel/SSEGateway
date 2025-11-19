@@ -53,13 +53,11 @@ Launch the code-writer agent with the plan location and full context.
 
 Before proceeding to code review:
 
-- [ ] Run `poetry run ruff check .` to verify linting passes
-- [ ] Run `poetry run mypy .` to verify type checking passes
-- [ ] Run `poetry run pytest` to verify all tests pass
+- [ ] Run `npm run build` to verify TypeScript compiles without errors
+- [ ] Run `npm test` to verify all tests pass
 - [ ] Review git diff for unexpected changes
-- [ ] Verify new test files were created as required by plan (service tests and API tests)
-- [ ] Check if Alembic migration was created for any schema changes
-- [ ] Verify test data files were updated if schema changed
+- [ ] Verify new test files were created as required by plan (unit tests and integration tests)
+- [ ] Check if environment variables or configuration changes are documented
 
 ### Step 3: Code Review
 
@@ -75,8 +73,8 @@ Use the **code-reviewer agent** to perform a comprehensive review:
    - Read through all findings, questions, and recommendations
    - Answer any questions you can address with reasonable confidence:
      - For API patterns: Review the codebase for established endpoint patterns
-     - For service patterns: Search for similar service implementations
-     - For database patterns: Look at existing models and relationships
+     - For utility patterns: Search for similar utility implementations
+     - For SSE patterns: Verify compliance with SSE spec requirements
      - Document your answers based on discovered patterns
    - Only defer to the user if you cannot answer with reasonable confidence
 
@@ -87,9 +85,8 @@ Use the **code-reviewer agent** to perform a comprehensive review:
    - Provide clear context about which issues need resolution
 
 4. **Verification checkpoint (After Fixes)**:
-   - [ ] Run `poetry run ruff check .` again
-   - [ ] Run `poetry run mypy .` again
-   - [ ] Run `poetry run pytest` again to verify ALL tests still pass
+   - [ ] Run `npm run build` again to verify TypeScript compiles
+   - [ ] Run `npm test` again to verify ALL tests still pass
    - [ ] Verify fixes address the specific review findings
    - [ ] Run full test suite if time permits
 
@@ -119,9 +116,8 @@ The report MUST include:
    - Which issues were accepted as-is with rationale
 
 4. **Verification Results**:
-   - Output of `poetry run ruff check .`
-   - Output of `poetry run mypy .`
-   - Test suite results (pass/fail counts from `poetry run pytest`)
+   - Output of `npm run build`
+   - Test suite results (pass/fail counts from `npm test`)
    - Any manual testing performed
 
 5. **Outstanding Work & Suggested Improvements** (required section):
@@ -138,56 +134,52 @@ Before considering the work complete:
 - All plan requirements are implemented
 - Code review has been completed with decision GO or GO-WITH-CONDITIONS
 - ALL issues identified in code review are resolved (BLOCKER, MAJOR, and MINOR)
-- `poetry run ruff check .` passes with no errors
-- `poetry run mypy .` passes with no errors
-- `poetry run pytest` passes with all tests green
+- `npm run build` completes without TypeScript errors
+- `npm test` passes with all tests green
 - Tests that fail as a side effect of the work are fixed
-- New test files created as required by plan (service tests and API tests)
-- Alembic migration created for any schema changes
-- Test data files updated if schema changed
-- Code follows established layered architecture patterns
-- Services use proper dependency injection
+- New test files created as required by plan (unit tests and integration tests)
+- Code follows established architecture patterns from CLAUDE.md
+- TypeScript types are properly defined for all interfaces and functions
+- ESM imports use `.js` extensions correctly
 - No outstanding questions remain (or are deferred to user with clear context)
 - **Plan execution report is written** (required)
 
 ## Example Workflow
 
 ```
-1. User: "Execute the plan at docs/features/shopping-cart/plan.md"
+1. User: "Execute the plan at docs/features/connect-callback/plan.md"
 
 2. Orchestrator: Launch code-writer agent with plan location
-   → Agent implements models, services, schemas, APIs, migrations, tests
+   → Agent implements types, utilities, route handlers, tests
 
 3. Orchestrator: Verification checkpoint
-   → Run `poetry run ruff check .`
-   → Run `poetry run mypy .`
-   → Run `poetry run pytest`
+   → Run `npm run build`
+   → Run `npm test`
    → Review git diff
-   → Check for migrations and test data updates
+   → Check for configuration changes
 
 4. Orchestrator: Delete existing code_review.md if present
 
 5. Orchestrator: Launch code-reviewer agent
-   → Specify plan path: docs/features/shopping-cart/plan.md
-   → Specify review output: docs/features/shopping-cart/code_review.md
+   → Specify plan path: docs/features/connect-callback/plan.md
+   → Specify review output: docs/features/connect-callback/code_review.md
    → Request review of unstaged changes
 
 6. Orchestrator: Review the code_review.md document
    → Answer questions about API patterns by searching codebase
-   → Answer questions about service design by finding similar implementations
+   → Answer questions about utility design by finding similar implementations
 
 7. Orchestrator: Request code-reviewer agent to resolve ALL identified issues
    → Provide context about specific issues to fix (including minor ones)
 
 8. Orchestrator: Verification checkpoint (after fixes)
-   → Run `poetry run ruff check .` again
-   → Run `poetry run mypy .` again
-   → Run `poetry run pytest` to verify all tests pass
+   → Run `npm run build` again
+   → Run `npm test` to verify all tests pass
    → Verify fixes address review findings
 
 9. Orchestrator: If confident, create plan_execution_report.md
    → Include status, summary, what was implemented, files changed
-   → Document verification results (ruff, mypy, pytest output)
+   → Document verification results (build, test output)
    → List any outstanding work or suggestions
    → Provide next steps for user
 
@@ -201,5 +193,5 @@ Before considering the work complete:
 - **Leverage the codebase**: Most questions can be answered by examining existing patterns
 - **Iterate without hesitation**: Multiple review cycles are acceptable to ensure quality
 - **Clear communication**: Provide specific, actionable feedback to agents
-- **Verify completion**: Run linting, type checking, and tests before considering the work done
-- **Check completeness**: Ensure migrations and test data updates are not forgotten
+- **Verify completion**: Run build and tests before considering the work done
+- **Check completeness**: Ensure configuration changes and ESM import conventions are followed
