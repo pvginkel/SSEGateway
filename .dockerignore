@@ -1,0 +1,42 @@
+# Dependencies
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+dist
+
+# Tests
+__tests__
+*.test.ts
+*.spec.ts
+coverage
+
+# Documentation
+docs
+*.md
+!package.json
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files (should be provided at runtime)
+.env
+.env.*
+
+# Claude Code
+.claude
