@@ -81,12 +81,12 @@ The gateway does **not**:
 ### **Route**
 
 ```
-GET /sse/<any-path-and-query>
+GET /<any-path-and-query>
 ```
 
 ### **Rules**
 
-* Accept **any** path under `/sse/`
+* Accept **any** path without restriction
 * Do not parse or validate the path or query string
 * Store the **full raw URL** in callback payload
 * Forward headers verbatim in callback payload
@@ -229,7 +229,7 @@ GET /readyz
 
 ## **4.1 Connect**
 
-1. Client sends `GET /sse/...`
+1. Client sends `GET <any-path>`
 2. Gateway generates `token`
 3. Gateway stores connection state
 4. Gateway POSTs callback:

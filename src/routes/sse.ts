@@ -1,7 +1,7 @@
 /**
  * SSE connection endpoint for SSEGateway
  *
- * Handles GET /sse/* wildcard routes for Server-Sent Event connections.
+ * Handles GET /* wildcard routes for Server-Sent Event connections.
  * Implements connection establishment, callback to Python backend, and disconnect detection.
  */
 
@@ -32,7 +32,7 @@ export function createSseRouter(config: Config): express.Router {
   const router = express.Router();
 
   /**
-   * GET /sse/* - SSE connection endpoint (accepts any path under /sse/)
+   * GET /* - SSE connection endpoint (accepts any path)
    *
    * 1. Validates CALLBACK_URL is configured
    * 2. Generates unique token using crypto.randomUUID()
@@ -43,7 +43,7 @@ export function createSseRouter(config: Config): express.Router {
    * 7. If callback fails (non-2xx/timeout/error): returns error status to client
    * 8. Handles client disconnect via 'close' event
    */
-  router.get(/^\/sse\/.*/, async (req: Request, res: Response) => {
+  router.get(/^\/.*/, async (req: Request, res: Response) => {
     // Check if CALLBACK_URL is configured
     if (!config.callbackUrl) {
       logger.error('SSE connection rejected: CALLBACK_URL not configured');
@@ -55,8 +55,8 @@ export function createSseRouter(config: Config): express.Router {
     const token = randomUUID();
 
     // Extract full raw URL (including query string)
-    // Defensive: fallback to '/sse/unknown' if req.url is undefined (edge case)
-    const url = req.url || '/sse/unknown';
+    // Defensive: fallback to '/unknown' if req.url is undefined (edge case)
+    const url = req.url || '/unknown';
 
     // Extract raw headers and filter out undefined values
     // This prevents JSON serialization issues in Python backend

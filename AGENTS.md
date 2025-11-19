@@ -23,8 +23,8 @@ SSEGateway is a **Node.js sidecar service** that terminates Server-Sent Event (S
 
 ## Critical Implementation Rules
 
-### SSE Endpoint (`GET /sse/*`)
-- Accept **ANY** path under `/sse/` - do NOT parse or validate
+### SSE Endpoint (`GET /*`)
+- Accept **ANY** path - do NOT parse or validate
 - Store the **full raw URL** including query string
 - Forward headers **verbatim** to callback
 - Generate token using `crypto.randomUUID()`
@@ -151,7 +151,7 @@ Typical structure should include:
 
 Plain text with severity prefix:
 ```
-[INFO] New SSE connection: token=abc-123 url=/sse/channel/updates
+[INFO] New SSE connection: token=abc-123 url=/channel/updates
 [ERROR] Callback failed: token=abc-123 error=ECONNREFUSED
 ```
 

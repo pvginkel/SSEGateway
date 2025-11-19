@@ -112,6 +112,52 @@ describe('SSE Connection Flow', () => {
       await responsePromise;
     }, 10000);
 
+    it('should accept non-/sse/ routes (e.g., /events/stream)', async () => {
+      // Start SSE connection on non-/sse/ path
+      const req = request(app).get('/events/stream?channel=notifications');
+      const responsePromise = req.then(() => {}, () => {});
+
+      // Wait for connection to be established and callback to be sent
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Verify connect callback was sent with full URL
+      const callbacks = mockServer.getCallbacks();
+      const connectCallback = callbacks.find(
+        (cb) => cb.action === 'connect' && cb.request.url === '/events/stream?channel=notifications'
+      );
+      expect(connectCallback).toBeDefined();
+      expect(connectCallback!.token).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      );
+
+      // Verify connection is stored in Map
+      expect(connections.has(connectCallback!.token)).toBe(true);
+
+      // Abort and cleanup
+      req.abort();
+      await responsePromise;
+    }, 10000);
+
+    it('should still accept /sse/ routes (backwards compatibility)', async () => {
+      // Verify existing /sse/ paths continue to work after pattern change
+      const req = request(app).get('/sse/legacy/endpoint?param=value');
+      const responsePromise = req.then(() => {}, () => {});
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Verify connect callback was sent with /sse/ URL
+      const callbacks = mockServer.getCallbacks();
+      const connectCallback = callbacks.find(
+        (cb) => cb.action === 'connect' && cb.request.url === '/sse/legacy/endpoint?param=value'
+      );
+      expect(connectCallback).toBeDefined();
+      expect(connections.has(connectCallback!.token)).toBe(true);
+
+      // Abort and cleanup
+      req.abort();
+      await responsePromise;
+    }, 10000);
+
     it('should forward headers verbatim without parsing', async () => {
       const req = request(app)
         .get('/sse/test')
