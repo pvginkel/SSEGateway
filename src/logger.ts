@@ -15,6 +15,15 @@ function info(message: string): void {
 }
 
 /**
+ * Log a warning message
+ *
+ * @param message - The warning message to log
+ */
+function warn(message: string): void {
+  console.warn(`[WARN] ${message}`);
+}
+
+/**
  * Log an error message
  *
  * @param message - The error message to log
@@ -25,5 +34,6 @@ function error(message: string): void {
 
 export const logger = {
   info,
+  warn,
   error,
 };

@@ -8,7 +8,7 @@
 import express, { Request, Response } from 'express';
 import type { Config } from '../config.js';
 import { logger } from '../logger.js';
-import { getConnection, removeConnection } from '../connections.js';
+import { getConnection, removeConnection, type ConnectionRecord } from '../connections.js';
 import { sendDisconnectCallback } from '../callback.js';
 import { formatSseEvent } from '../sse.js';
 
@@ -110,60 +110,13 @@ export function createInternalRouter(config: Config): express.Router {
       return;
     }
 
-    // If event is present, send it to the SSE stream
-    if (event) {
-      try {
-        // Format SSE event according to spec
-        const formattedEvent = formatSseEvent(event.name, event.data);
-
-        // Write to response stream
-        const writeSuccess = connection.res.write(formattedEvent);
-
-        // Flush immediately (required by SSE spec)
-        // Note: Express Response doesn't have flush() method - flushHeaders() only works before first write
-        // For SSE, we rely on write() to flush immediately for small chunks
-        // The X-Accel-Buffering: no header (set during connection) ensures no buffering
-
-        if (!writeSuccess) {
-          // Write returned false - indicates backpressure, but stream is still open
-          // For SSE, we continue anyway (client will catch up or disconnect)
-          logger.info(`Write backpressure on token=${token}, continuing anyway`);
-        }
-
-        // Log event send
-        const eventName = event.name || '(unnamed)';
-        const dataLength = event.data.length;
-        logger.info(
-          `Sent SSE event: token=${token} event=${eventName} dataLength=${dataLength} url=${connection.request.url}`
-        );
-      } catch (error) {
-        // Write failed - stream is closed or broken
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error(`Write failed: token=${token} error=${errorMessage}`);
-
-        // Cleanup connection state
-        if (connection.heartbeatTimer) {
-          clearInterval(connection.heartbeatTimer);
-        }
-        removeConnection(token);
-
-        // Send disconnect callback with reason "error" (best-effort)
-        await sendDisconnectCallback(
-          config.callbackUrl!,
-          token,
-          'error',
-          connection.request
-        );
-
-        // Return 500 to Python backend
-        res.status(500).json({ error: 'Write failed: connection closed' });
-        return;
-      }
-    }
-
-    // If close flag is true, close the connection
-    if (close) {
-      await handleServerClose(config.callbackUrl!, token, connection);
+    // Handle event and/or close using shared logic
+    try {
+      await handleEventAndClose(connection, event, close, token, config.callbackUrl!);
+    } catch (error) {
+      // Write failed - handleEventAndClose already performed cleanup
+      res.status(500).json({ error: 'Write failed: connection closed' });
+      return;
     }
 
     // Return success response
@@ -171,6 +124,82 @@ export function createInternalRouter(config: Config): express.Router {
   });
 
   return router;
+}
+
+/**
+ * Handle sending event and/or closing connection
+ *
+ * Extracted shared logic for both /internal/send and callback response handling.
+ * If both event and close: send event FIRST, then close (critical ordering).
+ *
+ * @param connection - Connection record
+ * @param event - Optional event to send
+ * @param close - Optional close flag
+ * @param token - Connection token (for logging)
+ * @param callbackUrl - Python backend callback URL
+ * @throws Error if write fails
+ */
+export async function handleEventAndClose(
+  connection: ConnectionRecord,
+  event: { name?: string; data: string } | undefined,
+  close: boolean | undefined,
+  token: string,
+  callbackUrl: string
+): Promise<void> {
+  // If event is present, send it to the SSE stream
+  if (event) {
+    try {
+      // Format SSE event according to spec
+      const formattedEvent = formatSseEvent(event.name, event.data);
+
+      // Write to response stream
+      const writeSuccess = connection.res.write(formattedEvent);
+
+      // Flush immediately (required by SSE spec)
+      // Note: Express Response doesn't have flush() method - flushHeaders() only works before first write
+      // For SSE, we rely on write() to flush immediately for small chunks
+      // The X-Accel-Buffering: no header (set during connection) ensures no buffering
+
+      if (!writeSuccess) {
+        // Write returned false - indicates backpressure, but stream is still open
+        // For SSE, we continue anyway (client will catch up or disconnect)
+        logger.info(`Write backpressure on token=${token}, continuing anyway`);
+      }
+
+      // Log event send
+      const eventName = event.name || '(unnamed)';
+      const dataLength = event.data.length;
+      logger.info(
+        `Sent SSE event: token=${token} event=${eventName} dataLength=${dataLength} url=${connection.request.url}`
+      );
+    } catch (error) {
+      // Write failed - stream is closed or broken
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Write failed: token=${token} error=${errorMessage}`);
+
+      // Cleanup connection state
+      if (connection.heartbeatTimer) {
+        clearInterval(connection.heartbeatTimer);
+      }
+      removeConnection(token);
+
+      // Send disconnect callback with reason "error" (best-effort)
+      await sendDisconnectCallback(
+        callbackUrl,
+        token,
+        'error',
+        connection.request
+      );
+
+      // Throw error to caller
+      throw new Error('Write failed: connection closed');
+    }
+  }
+
+  // If close flag is true, close the connection
+  if (close) {
+    await handleServerClose(callbackUrl, token, connection);
+  }
 }
 
 /**

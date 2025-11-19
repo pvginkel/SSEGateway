@@ -41,6 +41,7 @@ export class MockServer {
   private callbackRecords: CallbackRecord[] = [];
   private listening = false;
   public port = 0;
+  private responseBody: unknown = { status: 'ok' };
 
   constructor(config: MockServerConfig = {}) {
     this.config = {
@@ -147,6 +148,19 @@ export class MockServer {
   }
 
   /**
+   * Set the response body to return for future requests
+   *
+   * Accepts any value (object, string, etc.) and stores it.
+   * In sendResponse(), calls JSON.stringify() on the stored value.
+   * This allows testing both valid CallbackResponseBody objects AND invalid structures.
+   *
+   * @param body - Response body (will be JSON.stringify'd)
+   */
+  setResponseBody(body: unknown): void {
+    this.responseBody = body;
+  }
+
+  /**
    * Handle incoming HTTP requests
    *
    * @param req - Incoming request
@@ -193,6 +207,6 @@ export class MockServer {
    */
   private sendResponse(res: ServerResponse): void {
     res.writeHead(this.config.statusCode, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok' }));
+    res.end(JSON.stringify(this.responseBody));
   }
 }

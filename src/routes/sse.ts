@@ -21,6 +21,7 @@ import {
   sendDisconnectCallback,
   type CallbackRequest,
 } from '../callback.js';
+import { handleEventAndClose } from './internal.js';
 
 /**
  * Create SSE router with wildcard route handler
@@ -147,8 +148,52 @@ export function createSseRouter(config: Config): express.Router {
     res.status(200);
     res.flushHeaders();
 
-    // Add connection to Map (stream is now open)
-    addConnection(token, connectionRecord);
+    // Apply callback response body actions (event and/or close) if present
+    const { responseBody } = callbackResult;
+    if (responseBody && (responseBody.event || responseBody.close)) {
+      // Re-check disconnected flag before applying callback response
+      // Guards against race condition window between first check and event write
+      if (connectionRecord.disconnected) {
+        // Client disconnected between first check and now - skip event/close
+        logger.info(
+          `Client disconnected before callback response applied: token=${token}`
+        );
+        return;
+      }
+
+      // Add connection to Map before processing callback response
+      // This ensures connection is in Map only if we're about to apply the response
+      addConnection(token, connectionRecord);
+
+      // Log callback response body processing
+      logger.info(
+        `Applying callback response: token=${token} hasEvent=${!!responseBody.event} hasClose=${!!responseBody.close}`
+      );
+
+      try {
+        // Handle event and/or close using shared logic
+        await handleEventAndClose(
+          connectionRecord,
+          responseBody.event,
+          responseBody.close,
+          token,
+          config.callbackUrl
+        );
+
+        // If close was requested, connection is now closed - return early
+        if (responseBody.close) {
+          // handleEventAndClose already handled cleanup and disconnect callback
+          return;
+        }
+      } catch (error) {
+        // Write failed - handleEventAndClose already performed cleanup
+        // Connection is already closed, just return
+        return;
+      }
+    } else {
+      // No callback response body to process - add connection to Map now
+      addConnection(token, connectionRecord);
+    }
 
     // Create heartbeat timer to keep connection alive
     const heartbeatIntervalMs = config.heartbeatIntervalSeconds * 1000;
