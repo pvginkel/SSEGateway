@@ -49,6 +49,9 @@ export default {
   // Verbose output
   verbose: true,
 
+  // Force Jest to exit after all tests complete
+  forceExit: true,
+
   // Run tests serially to avoid race conditions in shared state (connections Map)
   maxWorkers: 1,
 };
