@@ -179,8 +179,17 @@ async function sendCallback(
       let responseBody: CallbackResponseBody | undefined;
 
       try {
-        const rawBody = await response.json();
-        responseBody = parseCallbackResponseBody(rawBody, token, action);
+        const rawText = await response.text();
+
+        // Check if response body is empty or whitespace-only
+        if (rawText.trim() === '') {
+          // Empty response - treat as {} without logging error
+          responseBody = undefined;
+        } else {
+          // Non-empty response - parse as JSON
+          const rawBody = JSON.parse(rawText);
+          responseBody = parseCallbackResponseBody(rawBody, token, action);
+        }
       } catch (error) {
         // JSON parse error or read error - treat as empty body
         const errorMessage = error instanceof Error ? error.message : String(error);

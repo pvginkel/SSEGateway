@@ -163,10 +163,12 @@ Reject with an error event:
 *(Note: In this case, you should also return a non-2xx status code)*
 
 **Behavior:**
-- Empty response body `{}` (default): Connection opens normally
-- Invalid JSON or malformed structures: Logged and ignored, connection proceeds normally
+- Empty response body (0 bytes or whitespace): Silently treated as `{}` (connection opens normally)
+- Valid JSON object `{}`: Connection opens normally
+- Malformed JSON: Logged as error, connection still proceeds
+- Invalid structures: Logged as errors, invalid fields ignored
 - If both `event` and `close` are present: Event is sent first, then connection closes
-- **Backwards compatible**: Existing Python backends work unchanged
+- **Flexible**: Python backends can return empty responses or `{}` for simple acceptance
 
 ### Send/Close Endpoint
 
