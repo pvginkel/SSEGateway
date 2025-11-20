@@ -110,6 +110,15 @@ export function createInternalRouter(config: Config): express.Router {
       return;
     }
 
+    // Check if connection is ready for writes (headers sent)
+    if (!connection.ready) {
+      // Buffer event for later delivery after headers are sent
+      logger.info(`Buffering event for token=${token} (connection not ready)`);
+      connection.eventBuffer.push({ name: event?.name, data: event?.data || '', close });
+      res.status(200).json({ status: 'buffered' });
+      return;
+    }
+
     // Handle event and/or close using shared logic
     try {
       await handleEventAndClose(connection, event, close, token, config.callbackUrl!);
@@ -155,10 +164,13 @@ export async function handleEventAndClose(
       // Write to response stream
       const writeSuccess = connection.res.write(formattedEvent);
 
-      // Flush immediately (required by SSE spec)
-      // Note: Express Response doesn't have flush() method - flushHeaders() only works before first write
-      // For SSE, we rely on write() to flush immediately for small chunks
-      // The X-Accel-Buffering: no header (set during connection) ensures no buffering
+      // Attempt to flush immediately to client (required by SSE spec)
+      // Note: Express does NOT expose flush() on the Response object, so this check
+      // will typically be false. However, the defensive check is harmless and documents
+      // the intent. In practice, res.write() with no compression is sufficient for SSE.
+      if ('flush' in connection.res && typeof (connection.res as any).flush === 'function') {
+        (connection.res as any).flush();
+      }
 
       if (!writeSuccess) {
         // Write returned false - indicates backpressure, but stream is still open

@@ -77,6 +77,43 @@ Store in: `Map<token, ConnectionRecord>`
 - `"server_closed"` - Python sent close=true
 - `"error"` - write failure or other error
 
+### Callback Window Buffering
+
+**The Exception to "No Buffering"**
+
+SSEGateway implements a **single, narrow exception** to the "no buffering" rule: events arriving during the callback window (between connection registration and header sending) are buffered.
+
+**Why This Exception Exists:**
+
+To prevent a race condition where Python sends events immediately after receiving the connect callback, but before SSEGateway has sent HTTP headers. Without buffering, these early events would be lost.
+
+**Bounded Duration:**
+
+- Buffering window begins: connection added to Map (before callback sent)
+- Buffering window ends: HTTP headers sent (after successful 2xx callback response)
+- Maximum duration: 5 seconds (callback timeout)
+- Typical duration: 10-500ms (callback round-trip time)
+
+**Event Ordering Guarantees:**
+
+1. Callback response event (if present) is sent FIRST
+2. Buffered events are flushed in FIFO order
+3. Heartbeats start only AFTER buffer is flushed
+4. All events for a token are serialized by Node.js event loop
+
+**Failure Modes:**
+
+- If callback fails (non-2xx): buffered events are discarded, connection closed
+- If client disconnects during callback: buffered events are discarded, no disconnect callback sent
+- If write fails during buffer flush: cleanup performed, disconnect callback sent with reason "error"
+
+**Implementation Details:**
+
+- Connection record includes `ready: boolean` flag (false until headers sent)
+- Connection record includes `eventBuffer: Array<event>` for temporary storage
+- `/internal/send` returns `{ status: 'buffered' }` for events arriving before `ready: true`
+- Buffer is cleared immediately after flushing (prevents duplicate sends)
+
 ### Callback Contract
 **POST to `CALLBACK_URL`:**
 ```json
@@ -98,7 +135,7 @@ Store in: `Map<token, ConnectionRecord>`
 - **No URL validation** - forward raw URL including query string
 - **No persistence** - all state lost on restart
 - **No horizontal scaling** - single instance only
-- **No event buffering/reordering**
+- **No event buffering/reordering*** (*except during callback window - see Callback Window Buffering below)
 - **No WebSocket support** - SSE only
 
 ## Configuration

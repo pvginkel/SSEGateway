@@ -24,6 +24,10 @@ export interface ConnectionRecord {
   heartbeatTimer: NodeJS.Timeout | null;
   /** Flag indicating client disconnected during async callback (race condition handling) */
   disconnected: boolean;
+  /** Flag indicating headers have been sent and stream is ready for writes */
+  ready: boolean;
+  /** Buffer for events received before stream is ready */
+  eventBuffer: Array<{ name?: string; data: string; close?: boolean }>;
 }
 
 /**

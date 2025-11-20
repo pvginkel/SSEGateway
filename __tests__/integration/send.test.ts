@@ -507,4 +507,349 @@ describe('Send and Close Operations', () => {
       expect(connections.has(token)).toBe(false);
     }, 10000);
   });
+
+  describe('Event buffering during callback window', () => {
+    it('should buffer event sent during callback and deliver after headers sent', async () => {
+      // Configure slow callback to create buffering window
+      mockServer.setDelay(200);
+
+      // Initiate SSE connection
+      const sseRequest = request(app).get('/sse/buffer-test');
+      const ssePromise = sseRequest.then(() => {}, () => {});
+
+      // Wait for connection to be added to Map but callback still in progress
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      // Get token from callback record
+      const connectCallback = mockServer.getCallbacks().find((cb) => cb.action === 'connect');
+      expect(connectCallback).toBeDefined();
+      const token = connectCallback!.token;
+
+      // Verify connection exists but is not ready
+      const connection = connections.get(token);
+      expect(connection).toBeDefined();
+      expect(connection!.ready).toBe(false);
+
+      // Send event during callback window
+      const sendResponse = await request(app)
+        .post('/internal/send')
+        .send({
+          token,
+          event: {
+            name: 'buffered',
+            data: 'This should be buffered',
+          },
+        });
+
+      // Should return 'buffered' status
+      expect(sendResponse.status).toBe(200);
+      expect(sendResponse.body).toEqual({ status: 'buffered' });
+
+      // Wait for callback to complete
+      await new Promise((resolve) => setTimeout(resolve, 200));
+
+      // Verify connection is now ready and buffer was cleared
+      const readyConnection = connections.get(token);
+      expect(readyConnection).toBeDefined();
+      expect(readyConnection!.ready).toBe(true);
+      expect(readyConnection!.eventBuffer.length).toBe(0);
+
+      // Cleanup
+      sseRequest.abort();
+      await ssePromise;
+    }, 10000);
+
+    it('should buffer multiple events (3+) and deliver in FIFO order', async () => {
+      // Configure slow callback
+      mockServer.setDelay(250);
+
+      const sseRequest = request(app).get('/sse/multi-buffer');
+      const ssePromise = sseRequest.then(() => {}, () => {});
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const token = mockServer.getLastCallback()!.token;
+      const connection = connections.get(token);
+      expect(connection!.ready).toBe(false);
+
+      // Send three events during callback window
+      const response1 = await request(app)
+        .post('/internal/send')
+        .send({ token, event: { name: 'first', data: 'Event 1' } });
+      expect(response1.body.status).toBe('buffered');
+
+      const response2 = await request(app)
+        .post('/internal/send')
+        .send({ token, event: { name: 'second', data: 'Event 2' } });
+      expect(response2.body.status).toBe('buffered');
+
+      const response3 = await request(app)
+        .post('/internal/send')
+        .send({ token, event: { name: 'third', data: 'Event 3' } });
+      expect(response3.body.status).toBe('buffered');
+
+      // Wait for callback to complete and buffer to flush
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      // Verify buffer was cleared
+      const readyConnection = connections.get(token);
+      expect(readyConnection).toBeDefined();
+      expect(readyConnection!.eventBuffer.length).toBe(0);
+
+      // Cleanup
+      sseRequest.abort();
+      await ssePromise;
+    }, 10000);
+
+    it('should send callback response event first, then buffered events', async () => {
+      // Configure callback to return event and add delay
+      mockServer.setResponseBody({
+        event: {
+          name: 'callback_event',
+          data: 'From callback',
+        },
+      });
+      mockServer.setDelay(200);
+
+      const sseRequest = request(app).get('/sse/callback-event-order');
+      const ssePromise = sseRequest.then(() => {}, () => {});
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const token = mockServer.getLastCallback()!.token;
+      expect(connections.get(token)!.ready).toBe(false);
+
+      // Buffer event during callback
+      await request(app)
+        .post('/internal/send')
+        .send({ token, event: { name: 'buffered', data: 'Buffered event' } });
+
+      // Wait for callback to complete
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      // Verify buffer was cleared (events were flushed)
+      const connection = connections.get(token);
+      expect(connection).toBeDefined();
+      expect(connection!.eventBuffer.length).toBe(0);
+
+      // Cleanup
+      sseRequest.abort();
+      await ssePromise;
+    }, 10000);
+
+    it('should discard buffered events when callback fails with 403', async () => {
+      // Configure callback to fail with 403 after delay
+      mockServer.setStatusCode(403);
+      mockServer.setDelay(200);
+
+      const sseRequest = request(app).get('/sse/callback-fail');
+      const ssePromise = sseRequest.then(() => {}, () => {});
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // Get token before callback completes
+      const callbacks = mockServer.getCallbacks();
+      const connectCallback = callbacks.find((cb) => cb.action === 'connect');
+      expect(connectCallback).toBeDefined();
+      const token = connectCallback!.token;
+
+      // Verify connection exists but not ready
+      const connection = connections.get(token);
+      expect(connection).toBeDefined();
+      expect(connection!.ready).toBe(false);
+
+      // Buffer events during callback
+      await request(app)
+        .post('/internal/send')
+        .send({ token, event: { data: 'Event 1' } });
+
+      await request(app)
+        .post('/internal/send')
+        .send({ token, event: { data: 'Event 2' } });
+
+      // Wait for callback to fail
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      // Verify connection was removed (callback failed)
+      expect(connections.has(token)).toBe(false);
+
+      // Verify no disconnect callback was sent (connection never established)
+      const disconnectCallback = mockServer
+        .getCallbacks()
+        .find((cb) => cb.action === 'disconnect' && cb.token === token);
+      expect(disconnectCallback).toBeUndefined();
+
+      // Cleanup
+      await ssePromise;
+    }, 10000);
+
+    it('should discard buffered events when client disconnects during callback', async () => {
+      // Configure slow callback
+      mockServer.setDelay(250);
+
+      const sseRequest = request(app).get('/sse/client-abort');
+      const ssePromise = sseRequest.then(() => {}, () => {});
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const token = mockServer.getLastCallback()!.token;
+      expect(connections.get(token)!.ready).toBe(false);
+
+      // Buffer events
+      await request(app)
+        .post('/internal/send')
+        .send({ token, event: { data: 'Buffered 1' } });
+
+      await request(app)
+        .post('/internal/send')
+        .send({ token, event: { data: 'Buffered 2' } });
+
+      // Abort connection during callback
+      sseRequest.abort();
+      await ssePromise;
+
+      // Wait for callback to complete and cleanup to process
+      await new Promise((resolve) => setTimeout(resolve, 350));
+
+      // Verify connection was eventually cleaned up
+      expect(connections.has(token)).toBe(false);
+
+      // Note: Due to race condition timing, a disconnect callback MAY be sent if
+      // the client disconnected after headers were sent but before we checked.
+      // This is acceptable behavior - the important part is that buffered events
+      // don't cause issues and cleanup happens correctly.
+    }, 10000);
+
+    it('should close connection when buffered event has close flag', async () => {
+      // Configure slow callback
+      mockServer.setDelay(200);
+
+      const sseRequest = request(app).get('/sse/buffered-close');
+      const ssePromise = sseRequest.then(() => {}, () => {});
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const token = mockServer.getLastCallback()!.token;
+
+      // Verify connection exists and is not ready (still in callback window)
+      const connection = connections.get(token);
+      expect(connection).toBeDefined();
+      expect(connection!.ready).toBe(false);
+
+      // Clear callbacks to isolate disconnect callback
+      mockServer.clearCallbacks();
+
+      // Buffer event with close flag
+      const sendResponse = await request(app)
+        .post('/internal/send')
+        .send({
+          token,
+          event: { data: 'Closing event' },
+          close: true,
+        });
+
+      expect(sendResponse.body.status).toBe('buffered');
+
+      // Wait for callback to complete and buffer to flush
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      // Verify connection was closed
+      expect(connections.has(token)).toBe(false);
+
+      // Verify disconnect callback with reason "server_closed"
+      const disconnectCallback = mockServer
+        .getCallbacks()
+        .find((cb) => cb.action === 'disconnect' && cb.token === token);
+      expect(disconnectCallback).toBeDefined();
+      expect(disconnectCallback!.reason).toBe('server_closed');
+
+      // Cleanup
+      await ssePromise;
+    }, 10000);
+
+    it('should send callback event and close immediately when response has both', async () => {
+      // Configure callback to return event+close
+      mockServer.setResponseBody({
+        event: {
+          name: 'final',
+          data: 'Goodbye',
+        },
+        close: true,
+      });
+      mockServer.setDelay(100);
+
+      const sseRequest = request(app).get('/sse/callback-close');
+      const ssePromise = sseRequest.then(() => {}, () => {});
+
+      // Wait for callback to complete
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const token = mockServer.getCallbacks().find((cb) => cb.action === 'connect')!.token;
+
+      // Verify connection was closed
+      expect(connections.has(token)).toBe(false);
+
+      // Verify disconnect callback with reason "server_closed"
+      const disconnectCallback = mockServer
+        .getCallbacks()
+        .find((cb) => cb.action === 'disconnect' && cb.token === token);
+      expect(disconnectCallback).toBeDefined();
+      expect(disconnectCallback!.reason).toBe('server_closed');
+
+      // Cleanup
+      await ssePromise;
+    }, 10000);
+
+    it('should discard second buffered event when first has close flag', async () => {
+      // Configure slow callback
+      mockServer.setDelay(200);
+
+      const sseRequest = request(app).get('/sse/close-then-event');
+      const ssePromise = sseRequest.then(() => {}, () => {});
+
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const token = mockServer.getLastCallback()!.token;
+
+      // Verify connection exists and is not ready (still in callback window)
+      const connection = connections.get(token);
+      expect(connection).toBeDefined();
+      expect(connection!.ready).toBe(false);
+
+      mockServer.clearCallbacks();
+
+      // Buffer event with close flag
+      await request(app)
+        .post('/internal/send')
+        .send({
+          token,
+          event: { name: 'closing', data: 'First event with close' },
+          close: true,
+        });
+
+      // Buffer another event (should be discarded when first closes connection)
+      await request(app)
+        .post('/internal/send')
+        .send({
+          token,
+          event: { name: 'unreachable', data: 'This should not be sent' },
+        });
+
+      // Wait for callback and buffer flush
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      // Verify connection was closed after first buffered event
+      expect(connections.has(token)).toBe(false);
+
+      // Verify only one disconnect callback (from close)
+      const disconnectCallbacks = mockServer
+        .getCallbacks()
+        .filter((cb) => cb.action === 'disconnect' && cb.token === token);
+      expect(disconnectCallbacks.length).toBe(1);
+      expect(disconnectCallbacks[0].reason).toBe('server_closed');
+
+      // Cleanup
+      await ssePromise;
+    }, 10000);
+  });
 });

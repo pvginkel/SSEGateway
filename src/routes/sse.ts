@@ -82,6 +82,8 @@ export function createSseRouter(config: Config): express.Router {
       request: callbackRequest,
       heartbeatTimer: null, // Heartbeat implementation deferred
       disconnected: false, // Track early client disconnect
+      ready: false, // Headers not sent yet
+      eventBuffer: [], // Buffer for events during callback
     };
 
     // Register 'close' event listener BEFORE sending callback
@@ -89,6 +91,10 @@ export function createSseRouter(config: Config): express.Router {
     res.on('close', () => {
       handleDisconnect(config.callbackUrl!, token, connectionRecord);
     });
+
+    // Add connection to Map BEFORE sending callback
+    // This allows /internal/send requests during callback to succeed
+    addConnection(token, connectionRecord);
 
     // Send connect callback to Python backend
     const callbackResult = await sendConnectCallback(
@@ -124,6 +130,9 @@ export function createSseRouter(config: Config): express.Router {
       // Mark as disconnected to prevent adding to Map if 'close' fires later
       connectionRecord.disconnected = true;
 
+      // Remove connection from Map since callback failed
+      removeConnection(token);
+
       // Return error to client WITHOUT setting SSE headers
       res.status(statusCode).json({ error: errorMessage });
       return;
@@ -148,8 +157,12 @@ export function createSseRouter(config: Config): express.Router {
     res.status(200);
     res.flushHeaders();
 
-    // Apply callback response body actions (event and/or close) if present
-    const { responseBody } = callbackResult;
+    // Mark connection as ready for writes
+    connectionRecord.ready = true;
+
+    // Apply callback response body actions (event and/or close) if present FIRST
+    const { responseBody} = callbackResult;
+    logger.info(`Callback response for token=${token}: hasEvent=${!!responseBody?.event} hasClose=${!!responseBody?.close}`);
     if (responseBody && (responseBody.event || responseBody.close)) {
       // Re-check disconnected flag before applying callback response
       // Guards against race condition window between first check and event write
@@ -160,10 +173,6 @@ export function createSseRouter(config: Config): express.Router {
         );
         return;
       }
-
-      // Add connection to Map before processing callback response
-      // This ensures connection is in Map only if we're about to apply the response
-      addConnection(token, connectionRecord);
 
       // Log callback response body processing
       logger.info(
@@ -190,10 +199,28 @@ export function createSseRouter(config: Config): express.Router {
         // Connection is already closed, just return
         return;
       }
-    } else {
-      // No callback response body to process - add connection to Map now
-      addConnection(token, connectionRecord);
     }
+
+    // Flush any buffered events that arrived during callback (after callback response event)
+    for (const bufferedEvent of connectionRecord.eventBuffer) {
+      try {
+        await handleEventAndClose(
+          connectionRecord,
+          bufferedEvent.name ? { name: bufferedEvent.name, data: bufferedEvent.data } : { data: bufferedEvent.data },
+          bufferedEvent.close,
+          token,
+          config.callbackUrl
+        );
+        if (bufferedEvent.close) {
+          // Connection closed by buffered event
+          return;
+        }
+      } catch (error) {
+        // Write failed - connection already closed
+        return;
+      }
+    }
+    connectionRecord.eventBuffer = []; // Clear buffer after flushing
 
     // Create heartbeat timer to keep connection alive
     const heartbeatIntervalMs = config.heartbeatIntervalSeconds * 1000;
