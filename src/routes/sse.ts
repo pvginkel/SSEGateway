@@ -160,48 +160,7 @@ export function createSseRouter(config: Config): express.Router {
     // Mark connection as ready for writes
     connectionRecord.ready = true;
 
-    // Apply callback response body actions (event and/or close) if present FIRST
-    const { responseBody} = callbackResult;
-    logger.info(`Callback response for token=${token}: hasEvent=${!!responseBody?.event} hasClose=${!!responseBody?.close}`);
-    if (responseBody && (responseBody.event || responseBody.close)) {
-      // Re-check disconnected flag before applying callback response
-      // Guards against race condition window between first check and event write
-      if (connectionRecord.disconnected) {
-        // Client disconnected between first check and now - skip event/close
-        logger.info(
-          `Client disconnected before callback response applied: token=${token}`
-        );
-        return;
-      }
-
-      // Log callback response body processing
-      logger.info(
-        `Applying callback response: token=${token} hasEvent=${!!responseBody.event} hasClose=${!!responseBody.close}`
-      );
-
-      try {
-        // Handle event and/or close using shared logic
-        await handleEventAndClose(
-          connectionRecord,
-          responseBody.event,
-          responseBody.close,
-          token,
-          config.callbackUrl
-        );
-
-        // If close was requested, connection is now closed - return early
-        if (responseBody.close) {
-          // handleEventAndClose already handled cleanup and disconnect callback
-          return;
-        }
-      } catch (error) {
-        // Write failed - handleEventAndClose already performed cleanup
-        // Connection is already closed, just return
-        return;
-      }
-    }
-
-    // Flush any buffered events that arrived during callback (after callback response event)
+    // Flush any buffered events that arrived during callback
     for (const bufferedEvent of connectionRecord.eventBuffer) {
       try {
         await handleEventAndClose(
@@ -278,36 +237,54 @@ async function handleDisconnect(
 ): Promise<void> {
   // Check if connection exists in Map
   if (hasConnection(token)) {
-    // Connection is in Map - perform full cleanup
+    // Connection is in Map
     const record = getConnection(token)!;
 
-    // Clear heartbeat timer if set
-    if (record.heartbeatTimer) {
-      clearInterval(record.heartbeatTimer);
+    // Check if connection was ready (headers sent)
+    if (record.ready) {
+      // Connection was fully established - perform full cleanup and send disconnect callback
+
+      // Clear heartbeat timer if set
+      if (record.heartbeatTimer) {
+        clearInterval(record.heartbeatTimer);
+      }
+
+      // Remove from Map
+      removeConnection(token);
+
+      // Log disconnect
+      logger.info(`Client disconnected: token=${token} url=${record.request.url}`);
+
+      // Send disconnect callback to Python (best-effort)
+      // Await to ensure callback completes before cleanup finishes
+      // sendDisconnectCallback already catches and logs errors internally
+      await sendDisconnectCallback(
+        callbackUrl,
+        token,
+        'client_closed',
+        record.request
+      );
+    } else {
+      // Connection in Map but not ready - client disconnected during callback window
+      // Set disconnected flag to prevent stream from opening
+      record.disconnected = true;
+
+      // Remove from Map
+      removeConnection(token);
+
+      logger.info(
+        `Client disconnected early: token=${token} url=${record.request.url} (during callback)`
+      );
+
+      // No disconnect callback sent - connection was never fully established in Python
     }
-
-    // Remove from Map
-    removeConnection(token);
-
-    // Log disconnect
-    logger.info(`Client disconnected: token=${token} url=${record.request.url}`);
-
-    // Send disconnect callback to Python (best-effort)
-    // Await to ensure callback completes before cleanup finishes
-    // sendDisconnectCallback already catches and logs errors internally
-    await sendDisconnectCallback(
-      callbackUrl,
-      token,
-      'client_closed',
-      record.request
-    );
   } else {
-    // Connection not in Map - client disconnected during callback
+    // Connection not in Map - should not happen with buffering, but handle defensively
     // Set disconnected flag to prevent later Map insertion
     connectionRecord.disconnected = true;
 
     logger.info(
-      `Client disconnected early: token=${token} url=${connectionRecord.request.url} (during callback)`
+      `Client disconnected early: token=${token} url=${connectionRecord.request.url} (not in Map)`
     );
 
     // No disconnect callback sent - connection was never established in Python

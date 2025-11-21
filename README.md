@@ -6,7 +6,6 @@ A lightweight Node.js sidecar service that terminates Server-Sent Event (SSE) co
 
 - **SSE Connection Management**: Handles SSE connection lifecycle (connect, send events, disconnect)
 - **Backend Coordination**: Notifies Python backend of connection events via callbacks
-- **Immediate Callback Responses**: Python can send events or close connections directly in callback responses
 - **Universal Path Support**: Accepts SSE connections on any path, forwarding raw URLs to backend
 - **Automatic Heartbeats**: Configurable heartbeat mechanism to keep connections alive
 - **Health Checks**: Built-in `/healthz` and `/readyz` endpoints for orchestration
@@ -26,7 +25,6 @@ Client (SSE) <---> SSEGateway <---> Python Backend (HTTP callbacks)
 1. Client connects to any path (e.g., `/events`, `/channel/123`)
 2. SSEGateway generates a unique token and makes a `connect` callback to Python
 3. Python validates the connection and returns 200 (accept) or non-2xx (reject)
-   - Python can optionally include events/close directives in the callback response for immediate action
 4. Python sends events via `POST /internal/send` with the connection token
 5. SSEGateway forwards events to the client over SSE
 6. On disconnect, SSEGateway notifies Python with a `disconnect` callback
@@ -113,62 +111,8 @@ curl -N http://localhost:3000/channel/updates?user=123
      }
    }
    ```
-4. Python responds:
-   - If 200: connection stays open
-   - If non-2xx: connection closes immediately with same status
-   - **Optional response body**: Python can include event/close in the response (see below)
-
-**Callback Response Body (Optional):**
-
-Python can optionally include a response body in the connect callback to send events or close the connection immediately:
-
-```json
-{
-  "event": {
-    "name": "welcome",
-    "data": "Connection established"
-  },
-  "close": true
-}
-```
-
-**Fields:**
-- `event` (optional): Event to send immediately upon connection
-  - `name` (optional): SSE event name
-  - `data` (required): Event data (string)
-- `close` (optional): If true, close connection immediately (after sending event if present)
-
-**Examples:**
-
-Send a welcome message:
-```json
-{
-  "event": {
-    "name": "welcome",
-    "data": "Connected to channel updates"
-  }
-}
-```
-
-Reject with an error event:
-```json
-{
-  "event": {
-    "name": "error",
-    "data": "Unauthorized access"
-  },
-  "close": true
-}
-```
-*(Note: In this case, you should also return a non-2xx status code)*
-
-**Behavior:**
-- Empty response body (0 bytes or whitespace): Silently treated as `{}` (connection opens normally)
-- Valid JSON object `{}`: Connection opens normally
-- Malformed JSON: Logged as error, connection still proceeds
-- Invalid structures: Logged as errors, invalid fields ignored
-- If both `event` and `close` are present: Event is sent first, then connection closes
-- **Flexible**: Python backends can return empty responses or `{}` for simple acceptance
+4. If Python returns 200, connection stays open
+5. If Python returns non-2xx, connection closes immediately with same status
 
 ### Send/Close Endpoint
 
@@ -264,10 +208,8 @@ When a connection closes, SSEGateway calls your Python backend:
 
 **Disconnect Reasons:**
 - `"client_closed"`: Client disconnected
-- `"server_closed"`: Python sent `close: true` (via `/internal/send` or callback response)
+- `"server_closed"`: Python sent `close: true`
 - `"error"`: Write failure or other error
-
-**Note:** Disconnect callbacks can also include a response body with `event`/`close` fields, but these are informational only and cannot be applied (the connection is already closing). Such response bodies are logged at WARN level.
 
 ## Development
 

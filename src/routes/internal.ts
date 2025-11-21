@@ -138,7 +138,7 @@ export function createInternalRouter(config: Config): express.Router {
 /**
  * Handle sending event and/or closing connection
  *
- * Extracted shared logic for both /internal/send and callback response handling.
+ * Extracted shared logic for both /internal/send and buffered event delivery.
  * If both event and close: send event FIRST, then close (critical ordering).
  *
  * @param connection - Connection record

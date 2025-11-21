@@ -601,42 +601,6 @@ describe('Send and Close Operations', () => {
       await ssePromise;
     }, 10000);
 
-    it('should send callback response event first, then buffered events', async () => {
-      // Configure callback to return event and add delay
-      mockServer.setResponseBody({
-        event: {
-          name: 'callback_event',
-          data: 'From callback',
-        },
-      });
-      mockServer.setDelay(200);
-
-      const sseRequest = request(app).get('/sse/callback-event-order');
-      const ssePromise = sseRequest.then(() => {}, () => {});
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
-      const token = mockServer.getLastCallback()!.token;
-      expect(connections.get(token)!.ready).toBe(false);
-
-      // Buffer event during callback
-      await request(app)
-        .post('/internal/send')
-        .send({ token, event: { name: 'buffered', data: 'Buffered event' } });
-
-      // Wait for callback to complete
-      await new Promise((resolve) => setTimeout(resolve, 250));
-
-      // Verify buffer was cleared (events were flushed)
-      const connection = connections.get(token);
-      expect(connection).toBeDefined();
-      expect(connection!.eventBuffer.length).toBe(0);
-
-      // Cleanup
-      sseRequest.abort();
-      await ssePromise;
-    }, 10000);
-
     it('should discard buffered events when callback fails with 403', async () => {
       // Configure callback to fail with 403 after delay
       mockServer.setStatusCode(403);
@@ -752,39 +716,6 @@ describe('Send and Close Operations', () => {
 
       // Wait for callback to complete and buffer to flush
       await new Promise((resolve) => setTimeout(resolve, 300));
-
-      // Verify connection was closed
-      expect(connections.has(token)).toBe(false);
-
-      // Verify disconnect callback with reason "server_closed"
-      const disconnectCallback = mockServer
-        .getCallbacks()
-        .find((cb) => cb.action === 'disconnect' && cb.token === token);
-      expect(disconnectCallback).toBeDefined();
-      expect(disconnectCallback!.reason).toBe('server_closed');
-
-      // Cleanup
-      await ssePromise;
-    }, 10000);
-
-    it('should send callback event and close immediately when response has both', async () => {
-      // Configure callback to return event+close
-      mockServer.setResponseBody({
-        event: {
-          name: 'final',
-          data: 'Goodbye',
-        },
-        close: true,
-      });
-      mockServer.setDelay(100);
-
-      const sseRequest = request(app).get('/sse/callback-close');
-      const ssePromise = sseRequest.then(() => {}, () => {});
-
-      // Wait for callback to complete
-      await new Promise((resolve) => setTimeout(resolve, 300));
-
-      const token = mockServer.getCallbacks().find((cb) => cb.action === 'connect')!.token;
 
       // Verify connection was closed
       expect(connections.has(token)).toBe(false);

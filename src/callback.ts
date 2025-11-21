@@ -47,22 +47,6 @@ interface DisconnectCallbackPayload {
 }
 
 /**
- * Callback response body structure
- * Optional event and/or close directive returned by Python backend in callback response
- */
-export interface CallbackResponseBody {
-  /** Optional event to send immediately */
-  event?: {
-    /** Optional event type name */
-    name?: string;
-    /** Event data (required if event present) */
-    data: string;
-  };
-  /** Optional close flag - if true, close connection after sending event */
-  close?: boolean;
-}
-
-/**
  * Callback response result
  */
 export interface CallbackResult {
@@ -74,8 +58,6 @@ export interface CallbackResult {
   errorType?: 'timeout' | 'network' | 'http_error';
   /** Error message (if request failed or non-2xx) */
   error?: string;
-  /** Parsed response body (only present if success = true and body is valid) */
-  responseBody?: CallbackResponseBody;
 }
 
 /**
@@ -125,20 +107,7 @@ export async function sendDisconnectCallback(
   };
 
   try {
-    const result = await sendCallback(callbackUrl, payload, token, 'disconnect');
-
-    // Disconnect callbacks are sent after connection cleanup
-    // Response bodies with event/close cannot be applied - log warning if present
-    if (result.success && result.responseBody) {
-      const { event, close } = result.responseBody;
-      if (event || close) {
-        logger.warn(
-          `disconnect callback returned response body with event/close but connection already closed: token=${token} hasEvent=${!!event} hasClose=${!!close}`
-        );
-      }
-    }
-
-    return result;
+    return await sendCallback(callbackUrl, payload, token, 'disconnect');
   } catch (error) {
     // Disconnect callback is best-effort - never throw, only log
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -175,32 +144,8 @@ async function sendCallback(
 
     if (response.ok) {
       // 2xx status - success
-      // Read and parse response body (lenient - invalid bodies treated as {})
-      let responseBody: CallbackResponseBody | undefined;
-
-      try {
-        const rawText = await response.text();
-
-        // Check if response body is empty or whitespace-only
-        if (rawText.trim() === '') {
-          // Empty response - treat as {} without logging error
-          responseBody = undefined;
-        } else {
-          // Non-empty response - parse as JSON
-          const rawBody = JSON.parse(rawText);
-          responseBody = parseCallbackResponseBody(rawBody, token, action);
-        }
-      } catch (error) {
-        // JSON parse error or read error - treat as empty body
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error(
-          `${action} callback response body parse error: token=${token} error=${errorMessage}`
-        );
-        // Continue with responseBody = undefined (treated as {})
-      }
-
       logger.info(`${action} callback succeeded: token=${token} status=${response.status}`);
-      return { success: true, statusCode: response.status, responseBody };
+      return { success: true, statusCode: response.status };
     } else {
       // Non-2xx status - failure
       const errorMsg = `${action} callback returned non-2xx: token=${token} status=${response.status}`;
@@ -237,88 +182,4 @@ async function sendCallback(
     logger.error(`${action} callback failed: token=${token} error=${errorMessage}`);
     return { success: false, errorType, error: `${errorType}: ${errorMessage}` };
   }
-}
-
-/**
- * Parse and validate callback response body with lenient validation
- *
- * Invalid structures are treated as empty {} and logged as errors.
- * This maintains backwards compatibility with Python backends that don't send bodies.
- *
- * @param rawBody - Raw JSON-parsed response body
- * @param token - Connection token (for logging)
- * @param action - Action type (for logging)
- * @returns Validated CallbackResponseBody or undefined if invalid
- */
-function parseCallbackResponseBody(
-  rawBody: unknown,
-  token: string,
-  action: string
-): CallbackResponseBody | undefined {
-  // If body is not an object, treat as empty
-  if (typeof rawBody !== 'object' || rawBody === null) {
-    if (rawBody !== null && rawBody !== undefined) {
-      logger.error(
-        `${action} callback response body is not an object: token=${token} type=${typeof rawBody}`
-      );
-    }
-    return undefined;
-  }
-
-  const body = rawBody as Record<string, unknown>;
-  const result: CallbackResponseBody = {};
-  let hasValidFields = false;
-
-  // Validate event field if present
-  if ('event' in body) {
-    const event = body.event;
-
-    // event must be an object
-    if (typeof event !== 'object' || event === null) {
-      logger.error(
-        `${action} callback response body event field is not an object: token=${token} type=${typeof event}`
-      );
-    } else {
-      const eventObj = event as Record<string, unknown>;
-
-      // event.data is required if event is present
-      if (!('data' in eventObj) || typeof eventObj.data !== 'string') {
-        logger.error(
-          `${action} callback response body event.data is missing or not a string: token=${token}`
-        );
-      } else {
-        // event.data is valid - include in result
-        result.event = { data: eventObj.data };
-        hasValidFields = true;
-
-        // event.name is optional but must be string if present
-        if ('name' in eventObj) {
-          if (typeof eventObj.name === 'string') {
-            result.event.name = eventObj.name;
-          } else if (eventObj.name !== undefined) {
-            logger.error(
-              `${action} callback response body event.name is not a string: token=${token} type=${typeof eventObj.name}`
-            );
-          }
-        }
-      }
-    }
-  }
-
-  // Validate close field if present
-  if ('close' in body) {
-    const close = body.close;
-
-    if (typeof close === 'boolean') {
-      result.close = close;
-      hasValidFields = true;
-    } else {
-      logger.error(
-        `${action} callback response body close field is not a boolean: token=${token} type=${typeof close}`
-      );
-    }
-  }
-
-  // Return empty object if no valid fields found (valid but empty response)
-  return hasValidFields ? result : {};
 }
