@@ -23,6 +23,18 @@ export function createApp(config: Config): Express {
   // Parse JSON request bodies
   app.use(express.json());
 
+  // Add CORS headers for development/testing (allows direct browser connections)
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Cache-Control');
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   // Register health check routes
   const healthRouter = createHealthRouter(config);
   app.use(healthRouter);
