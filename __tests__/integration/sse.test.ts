@@ -247,7 +247,12 @@ describe('SSE Connection Flow', () => {
 
       expect(response.status).toBe(401);
       expect(response.headers['content-type']).toMatch(/application\/json/);
-      expect(response.body).toEqual({ error: 'Backend returned 401' });
+      expect(response.body).toEqual({
+        error: {
+          message: 'Backend returned 401',
+          code: 'BACKEND_AUTH_FAILED',
+        },
+      });
 
       // Verify connect callback was sent
       const callbacks = mockServer.getCallbacks();
@@ -264,7 +269,12 @@ describe('SSE Connection Flow', () => {
       const response = await request(app).get('/sse/forbidden');
 
       expect(response.status).toBe(403);
-      expect(response.body).toEqual({ error: 'Backend returned 403' });
+      expect(response.body).toEqual({
+        error: {
+          message: 'Backend returned 403',
+          code: 'BACKEND_FORBIDDEN',
+        },
+      });
       expect(connections.size).toBe(0);
     });
 
@@ -274,7 +284,12 @@ describe('SSE Connection Flow', () => {
       const response = await request(app).get('/sse/error');
 
       expect(response.status).toBe(500);
-      expect(response.body).toEqual({ error: 'Backend returned 500' });
+      expect(response.body).toEqual({
+        error: {
+          message: 'Backend returned 500',
+          code: 'BACKEND_ERROR',
+        },
+      });
       expect(connections.size).toBe(0);
     });
 
@@ -297,7 +312,12 @@ describe('SSE Connection Flow', () => {
       const response = await request(app).get('/sse/test');
 
       expect(response.status).toBe(503);
-      expect(response.body).toEqual({ error: 'Backend unavailable' });
+      expect(response.body).toEqual({
+        error: {
+          message: 'Backend unavailable',
+          code: 'BACKEND_UNAVAILABLE',
+        },
+      });
       expect(connections.size).toBe(0);
     });
 
@@ -308,7 +328,12 @@ describe('SSE Connection Flow', () => {
       const response = await request(app).get('/sse/test');
 
       expect(response.status).toBe(504);
-      expect(response.body).toEqual({ error: 'Gateway timeout' });
+      expect(response.body).toEqual({
+        error: {
+          message: 'Gateway timeout',
+          code: 'GATEWAY_TIMEOUT',
+        },
+      });
       expect(connections.size).toBe(0);
     }, 10000); // Increase Jest timeout for this test
   });
@@ -324,7 +349,12 @@ describe('SSE Connection Flow', () => {
       const response = await request(appWithoutCallback).get('/sse/test');
 
       expect(response.status).toBe(503);
-      expect(response.body).toEqual({ error: 'Service not configured' });
+      expect(response.body).toEqual({
+        error: {
+          message: 'Service not configured',
+          code: 'SERVICE_NOT_CONFIGURED',
+        },
+      });
       expect(connections.size).toBe(0);
     });
   });

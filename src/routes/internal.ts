@@ -11,6 +11,16 @@ import { logger } from '../logger.js';
 import { getConnection, removeConnection, type ConnectionRecord } from '../connections.js';
 import { sendDisconnectCallback } from '../callback.js';
 import { formatSseEvent } from '../sse.js';
+import {
+  respondWithError,
+  INVALID_TOKEN_MISSING,
+  INVALID_EVENT_TYPE,
+  INVALID_EVENT_DATA_MISSING,
+  INVALID_EVENT_NAME_TYPE,
+  INVALID_CLOSE_TYPE,
+  TOKEN_NOT_FOUND,
+  WRITE_FAILED,
+} from '../errors.js';
 
 /**
  * Send request payload structure
@@ -64,7 +74,7 @@ export function createInternalRouter(config: Config): express.Router {
     // Token is required and must be a string
     if (!body.token || typeof body.token !== 'string') {
       logger.error('Invalid /internal/send request: missing or invalid token');
-      res.status(400).json({ error: 'Invalid request: token is required and must be a string' });
+      respondWithError(res, 400, 'Invalid request: token is required and must be a string', INVALID_TOKEN_MISSING);
       return;
     }
 
@@ -74,21 +84,21 @@ export function createInternalRouter(config: Config): express.Router {
     if (event !== undefined) {
       if (typeof event !== 'object' || event === null) {
         logger.error(`Invalid /internal/send request: event must be an object: token=${token}`);
-        res.status(400).json({ error: 'Invalid request: event must be an object' });
+        respondWithError(res, 400, 'Invalid request: event must be an object', INVALID_EVENT_TYPE);
         return;
       }
 
       // event.data is required if event is present
       if (!('data' in event) || typeof event.data !== 'string') {
         logger.error(`Invalid /internal/send request: event.data is required and must be a string: token=${token}`);
-        res.status(400).json({ error: 'Invalid request: event.data is required and must be a string' });
+        respondWithError(res, 400, 'Invalid request: event.data is required and must be a string', INVALID_EVENT_DATA_MISSING);
         return;
       }
 
       // event.name (if present) must be a string
       if ('name' in event && event.name !== undefined && typeof event.name !== 'string') {
         logger.error(`Invalid /internal/send request: event.name must be a string: token=${token}`);
-        res.status(400).json({ error: 'Invalid request: event.name must be a string' });
+        respondWithError(res, 400, 'Invalid request: event.name must be a string', INVALID_EVENT_NAME_TYPE);
         return;
       }
     }
@@ -96,7 +106,7 @@ export function createInternalRouter(config: Config): express.Router {
     // If close is present, validate it's a boolean
     if (close !== undefined && typeof close !== 'boolean') {
       logger.error(`Invalid /internal/send request: close must be a boolean: token=${token}`);
-      res.status(400).json({ error: 'Invalid request: close must be a boolean' });
+      respondWithError(res, 400, 'Invalid request: close must be a boolean', INVALID_CLOSE_TYPE);
       return;
     }
 
@@ -106,7 +116,7 @@ export function createInternalRouter(config: Config): express.Router {
     if (!connection) {
       // Token not found - connection doesn't exist or already closed
       logger.info(`Send request for unknown token: token=${token}`);
-      res.status(404).json({ error: 'Token not found' });
+      respondWithError(res, 404, 'Token not found', TOKEN_NOT_FOUND);
       return;
     }
 
@@ -124,7 +134,7 @@ export function createInternalRouter(config: Config): express.Router {
       await handleEventAndClose(connection, event, close, token, config.callbackUrl!);
     } catch (error) {
       // Write failed - handleEventAndClose already performed cleanup
-      res.status(500).json({ error: 'Write failed: connection closed' });
+      respondWithError(res, 500, 'Write failed: connection closed', WRITE_FAILED);
       return;
     }
 

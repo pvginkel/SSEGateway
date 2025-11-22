@@ -22,6 +22,15 @@ import {
   type CallbackRequest,
 } from '../callback.js';
 import { handleEventAndClose } from './internal.js';
+import {
+  respondWithError,
+  SERVICE_NOT_CONFIGURED,
+  BACKEND_AUTH_FAILED,
+  BACKEND_FORBIDDEN,
+  BACKEND_ERROR,
+  BACKEND_UNAVAILABLE,
+  GATEWAY_TIMEOUT,
+} from '../errors.js';
 
 /**
  * Create SSE router with wildcard route handler
@@ -48,7 +57,7 @@ export function createSseRouter(config: Config): express.Router {
     // Check if CALLBACK_URL is configured
     if (!config.callbackUrl) {
       logger.error('SSE connection rejected: CALLBACK_URL not configured');
-      res.status(503).json({ error: 'Service not configured' });
+      respondWithError(res, 503, 'Service not configured', SERVICE_NOT_CONFIGURED);
       return;
     }
 
@@ -105,22 +114,34 @@ export function createSseRouter(config: Config): express.Router {
 
     // Handle callback result
     if (!callbackResult.success) {
-      // Callback failed - determine appropriate HTTP status code
+      // Callback failed - determine appropriate HTTP status code and error code
       let statusCode: number;
       let errorMessage: string;
+      let errorCode: string;
 
       if (callbackResult.errorType === 'timeout') {
         // Callback timeout (>5s)
         statusCode = 504;
         errorMessage = 'Gateway timeout';
+        errorCode = GATEWAY_TIMEOUT;
       } else if (callbackResult.errorType === 'http_error') {
-        // Non-2xx response from Python - return same status
+        // Non-2xx response from Python - return same status with semantic error code
         statusCode = callbackResult.statusCode!;
         errorMessage = `Backend returned ${statusCode}`;
+
+        // Use specific error codes for different HTTP status codes
+        if (statusCode === 401) {
+          errorCode = BACKEND_AUTH_FAILED;
+        } else if (statusCode === 403) {
+          errorCode = BACKEND_FORBIDDEN;
+        } else {
+          errorCode = BACKEND_ERROR;
+        }
       } else {
         // Network error (ECONNREFUSED, DNS failure, etc.)
         statusCode = 503;
         errorMessage = 'Backend unavailable';
+        errorCode = BACKEND_UNAVAILABLE;
       }
 
       logger.error(
@@ -134,7 +155,7 @@ export function createSseRouter(config: Config): express.Router {
       removeConnection(token);
 
       // Return error to client WITHOUT setting SSE headers
-      res.status(statusCode).json({ error: errorMessage });
+      respondWithError(res, statusCode, errorMessage, errorCode);
       return;
     }
 

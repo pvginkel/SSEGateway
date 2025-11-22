@@ -333,7 +333,12 @@ describe('Send and Close Operations', () => {
         });
 
       expect(response.status).toBe(404);
-      expect(response.body).toEqual({ error: 'Token not found' });
+      expect(response.body).toEqual({
+        error: {
+          message: 'Token not found',
+          code: 'TOKEN_NOT_FOUND',
+        },
+      });
     });
 
     it('should return 400 when token is missing', async () => {
@@ -346,7 +351,12 @@ describe('Send and Close Operations', () => {
         });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toMatch(/token is required/i);
+      expect(response.body).toEqual({
+        error: {
+          message: expect.stringMatching(/token is required/i),
+          code: 'INVALID_TOKEN_MISSING',
+        },
+      });
     });
 
     it('should return 400 when token is not a string', async () => {
@@ -360,7 +370,12 @@ describe('Send and Close Operations', () => {
         });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toMatch(/token.*must be a string/i);
+      expect(response.body).toEqual({
+        error: {
+          message: expect.stringMatching(/token.*must be a string/i),
+          code: 'INVALID_TOKEN_MISSING',
+        },
+      });
     });
 
     it('should return 400 when event is not an object', async () => {
@@ -372,7 +387,12 @@ describe('Send and Close Operations', () => {
         });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toMatch(/event must be an object/i);
+      expect(response.body).toEqual({
+        error: {
+          message: expect.stringMatching(/event must be an object/i),
+          code: 'INVALID_EVENT_TYPE',
+        },
+      });
     });
 
     it('should return 400 when event.data is missing', async () => {
@@ -387,7 +407,12 @@ describe('Send and Close Operations', () => {
         });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toMatch(/event\.data.*required/i);
+      expect(response.body).toEqual({
+        error: {
+          message: expect.stringMatching(/event\.data.*required/i),
+          code: 'INVALID_EVENT_DATA_MISSING',
+        },
+      });
     });
 
     it('should return 400 when event.data is not a string', async () => {
@@ -401,7 +426,12 @@ describe('Send and Close Operations', () => {
         });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toMatch(/event\.data.*must be a string/i);
+      expect(response.body).toEqual({
+        error: {
+          message: expect.stringMatching(/event\.data.*must be a string/i),
+          code: 'INVALID_EVENT_DATA_MISSING',
+        },
+      });
     });
 
     it('should return 400 when event.name is not a string', async () => {
@@ -416,7 +446,12 @@ describe('Send and Close Operations', () => {
         });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toMatch(/event\.name.*must be a string/i);
+      expect(response.body).toEqual({
+        error: {
+          message: expect.stringMatching(/event\.name.*must be a string/i),
+          code: 'INVALID_EVENT_NAME_TYPE',
+        },
+      });
     });
 
     it('should return 400 when close is not a boolean', async () => {
@@ -428,7 +463,12 @@ describe('Send and Close Operations', () => {
         });
 
       expect(response.status).toBe(400);
-      expect(response.body.error).toMatch(/close must be a boolean/i);
+      expect(response.body).toEqual({
+        error: {
+          message: expect.stringMatching(/close must be a boolean/i),
+          code: 'INVALID_CLOSE_TYPE',
+        },
+      });
     });
 
     it('should return 404 when trying to close already-closed connection', async () => {
@@ -453,7 +493,12 @@ describe('Send and Close Operations', () => {
         .send({ token, close: true });
 
       expect(response.status).toBe(404);
-      expect(response.body).toEqual({ error: 'Token not found' });
+      expect(response.body).toEqual({
+        error: {
+          message: 'Token not found',
+          code: 'TOKEN_NOT_FOUND',
+        },
+      });
 
       // Cleanup
       await ssePromise;
