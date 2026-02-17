@@ -200,6 +200,29 @@ Log these events:
 - Connection closes (token, reason)
 - All errors
 
+## npm Package Distribution
+
+SSEGateway is available as an npm `devDependency` via git URL for local development and Playwright test execution. Production deployment continues to use the Docker sidecar pattern.
+
+### The `stable` branch
+
+The `stable` branch is the integration point for consumers. When changes to SSEGateway are ready for downstream use:
+
+1. Merge to `main` as usual
+2. Fast-forward the `stable` branch to the desired commit: `git push origin main:stable`
+
+Consumers reference `git+https://<git-server>/SSEGateway.git#stable` in their `devDependencies`. **Do not force-push or rewrite history on `stable`** — consumers' lockfiles reference specific commits on this branch.
+
+### Build-time dependencies
+
+`typescript`, `@types/express`, and `@types/node` are in `dependencies` (not `devDependencies`) because the `prepare` script runs `tsc` at install time for git-based installs. `dist/` is not committed to the repository.
+
+### Package surface area
+
+The `files` field limits the installed package to `dist/` only. The `exports` field maps the package root to `dist/index.js`. There is no `bin` entry — consumers spawn `node` directly with the resolved entry point.
+
+See `docs/usage.md` for full consumer documentation.
+
 ## Reference
 
 Complete specification: `/work/docs/product_brief.md`
