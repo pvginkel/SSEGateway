@@ -3,17 +3,25 @@
  *
  * Implements Server-Sent Event formatting following the full SSE specification.
  * https://html.spec.whatwg.org/multipage/server-sent-events.html
+ *
+ * Named events (except internal plumbing like `connection_close`) are wrapped
+ * in an unnamed envelope: `data: {"type":"<name>","payload":<data>}\n\n`.
+ * This allows consumers to use a single `onmessage` handler instead of
+ * registering per-event-type listeners, eliminating subscription race conditions.
  */
 
+/** Event names that retain the legacy named-event format (internal plumbing). */
+const NAMED_EVENT_PASSTHROUGH = new Set(['connection_close']);
+
 /**
- * Format an SSE event according to the full SSE specification
+ * Format an SSE event for the wire.
  *
- * SSE format:
- * - If event name is provided: `event: <name>\n`
- * - For each line in data: `data: <line>\n`
- * - Blank line terminator: `\n`
- *
- * Multi-line data is split on `\n` and sent as separate `data:` lines.
+ * Behaviour:
+ * - **No name / passthrough name** (`connection_close`): classic SSE format
+ *   with optional `event:` line and raw `data:` lines.
+ * - **All other named events**: wrapped in an unnamed envelope so the browser
+ *   receives them via `EventSource.onmessage`:
+ *   `data: {"type":"<name>","payload":<data>}\n\n`
  *
  * @param name - Optional event type name
  * @param data - Event data string (may contain newlines)
@@ -21,29 +29,34 @@
  *
  * @example
  * ```ts
- * // Simple event with name
- * formatSseEvent('message', 'Hello, world!')
- * // Returns: "event: message\ndata: Hello, world!\n\n"
+ * // Named event -> envelope (unnamed)
+ * formatSseEvent('version', '{"version":"abc123"}')
+ * // Returns: 'data: {"type":"version","payload":{"version":"abc123"}}\n\n'
  *
- * // Event without name
+ * // connection_close stays named (passthrough)
+ * formatSseEvent('connection_close', '{"reason":"done"}')
+ * // Returns: 'event: connection_close\ndata: {"reason":"done"}\n\n'
+ *
+ * // No name -> raw data
  * formatSseEvent(undefined, 'Hello')
- * // Returns: "data: Hello\n\n"
- *
- * // Multi-line data
- * formatSseEvent('update', 'Line 1\nLine 2\nLine 3')
- * // Returns: "event: update\ndata: Line 1\ndata: Line 2\ndata: Line 3\n\n"
- *
- * // Empty data
- * formatSseEvent(undefined, '')
- * // Returns: "data: \n\n"
+ * // Returns: 'data: Hello\n\n'
  * ```
  */
 export function formatSseEvent(name: string | undefined, data: string): string {
-  // Build event string following SSE spec
+  const hasName = name !== undefined && name.length > 0;
+
+  // Named events that are NOT in the passthrough set get wrapped in an envelope
+  if (hasName && !NAMED_EVENT_PASSTHROUGH.has(name)) {
+    // Build the envelope JSON: {"type":"<name>","payload":<data>}
+    // `data` is already a JSON string from the backend, so embed it raw as the payload value.
+    const envelope = `{"type":${JSON.stringify(name)},"payload":${data}}`;
+    return `data: ${envelope}\n\n`;
+  }
+
+  // Passthrough path: connection_close or unnamed events use the classic format
   let event = '';
 
-  // Add event name line if provided (and non-empty)
-  if (name && name.length > 0) {
+  if (hasName) {
     event += `event: ${name}\n`;
   }
 
@@ -54,7 +67,6 @@ export function formatSseEvent(name: string | undefined, data: string): string {
     event += `data: ${line}\n`;
   }
 
-  // Add blank line to terminate event
   event += '\n';
 
   return event;
