@@ -1,0 +1,20 @@
+FROM node:20-alpine
+
+# netcat for service readiness checks, bash for entrypoint
+RUN apk add --no-cache bash
+
+WORKDIR /app
+
+# Copy everything
+COPY . .
+
+# Install all dependencies (including devDependencies for tests)
+RUN npm ci --ignore-scripts
+
+# Build TypeScript
+RUN npm run build
+
+COPY scripts/validation-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
