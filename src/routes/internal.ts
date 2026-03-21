@@ -11,6 +11,7 @@ import { logger } from '../logger.js';
 import { getConnection, removeConnection, type ConnectionRecord } from '../connections.js';
 import { sendDisconnectCallback } from '../callback.js';
 import { formatSseEvent } from '../sse.js';
+import { cancelConsumer } from '../rabbitmq.js';
 import {
   respondWithError,
   INVALID_TOKEN_MISSING,
@@ -203,6 +204,12 @@ export async function handleEventAndClose(
       if (connection.heartbeatTimer) {
         clearInterval(connection.heartbeatTimer);
       }
+
+      // Cancel AMQP consumer if one was started for this connection
+      if (connection.amqpConsumerTag) {
+        await cancelConsumer(connection.amqpConsumerTag);
+      }
+
       removeConnection(token);
 
       // Send disconnect callback with reason "error" (best-effort)
@@ -246,6 +253,11 @@ async function handleServerClose(
   // Clear heartbeat timer if set
   if (connection.heartbeatTimer) {
     clearInterval(connection.heartbeatTimer);
+  }
+
+  // Cancel AMQP consumer if one was started for this connection
+  if (connection.amqpConsumerTag) {
+    await cancelConsumer(connection.amqpConsumerTag);
   }
 
   // Remove from Map

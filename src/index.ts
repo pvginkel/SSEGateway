@@ -9,6 +9,7 @@ import { createServer, Server } from 'http';
 import { loadConfig } from './config.js';
 import { logger } from './logger.js';
 import { createApp } from './server.js';
+import { connectRabbitMQ, shutdownRabbitMQ } from './rabbitmq.js';
 
 /**
  * Start the SSEGateway server
@@ -19,12 +20,20 @@ async function start(): Promise<void> {
 
   // Log configuration summary (log presence only for security)
   const callbackUrlSummary = config.callbackUrl ? '<configured>' : '<not configured>';
+  const rabbitmqUrlSummary = config.rabbitmqUrl ? '<configured>' : '<not configured>';
   logger.info(
-    `Configuration loaded: callbackUrl=${callbackUrlSummary} heartbeatInterval=${config.heartbeatIntervalSeconds}s port=${config.port}`
+    `Configuration loaded: callbackUrl=${callbackUrlSummary} heartbeatInterval=${config.heartbeatIntervalSeconds}s port=${config.port} rabbitmqUrl=${rabbitmqUrlSummary}`
   );
 
   // Create Express application
   const app = createApp(config);
+
+  // Connect to RabbitMQ if configured (non-blocking — gateway starts regardless)
+  if (config.rabbitmqUrl) {
+    connectRabbitMQ(config).catch((err: Error) => {
+      logger.error(`RabbitMQ initial connect error: ${err.message}`);
+    });
+  }
 
   // Create HTTP server
   const server: Server = createServer(app);
@@ -54,7 +63,7 @@ async function start(): Promise<void> {
  * @param server - HTTP server instance
  */
 function setupGracefulShutdown(server: Server): void {
-  const shutdown = (): void => {
+  const shutdown = async (): Promise<void> => {
     logger.info('Shutdown signal received, closing server gracefully...');
 
     // Force shutdown after 10 seconds if graceful shutdown doesn't complete
@@ -63,6 +72,10 @@ function setupGracefulShutdown(server: Server): void {
       process.exit(1);
     }, 10000);
 
+    // Shut down RabbitMQ BEFORE closing the HTTP server so in-flight
+    // AMQP messages are acked/nacked cleanly before the channel closes.
+    await shutdownRabbitMQ();
+
     server.close(() => {
       clearTimeout(timeoutHandle);
       logger.info('Server closed, exiting process');
@@ -70,8 +83,8 @@ function setupGracefulShutdown(server: Server): void {
     });
   };
 
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', () => { shutdown().catch((err: Error) => logger.error(`Shutdown error: ${err.message}`)); });
+  process.on('SIGINT', () => { shutdown().catch((err: Error) => logger.error(`Shutdown error: ${err.message}`)); });
 }
 
 // Start the server

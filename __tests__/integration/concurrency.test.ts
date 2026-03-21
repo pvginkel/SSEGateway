@@ -37,6 +37,8 @@ describe('Concurrent Connections', () => {
       port: 3000,
       callbackUrl: mockServer.getCallbackUrl(),
       heartbeatIntervalSeconds: 1,
+      rabbitmqUrl: null,
+      rabbitmqQueueTtlMs: 300000,
     };
     app = createApp(config);
   });

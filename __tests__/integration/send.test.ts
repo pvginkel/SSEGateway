@@ -29,6 +29,8 @@ describe('Send and Close Operations', () => {
       port: 3000,
       callbackUrl: mockServer.getCallbackUrl(),
       heartbeatIntervalSeconds: 15,
+      rabbitmqUrl: null,
+      rabbitmqQueueTtlMs: 300000,
     };
     app = createApp(config);
   });

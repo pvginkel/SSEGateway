@@ -31,8 +31,10 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "@types/amqplib": "^0.10.5",
     "@types/express": "^5.0.0",
     "@types/node": "^20.17.6",
+    "amqplib": "^0.10.4",
     "express": "^5.0.1",
     "typescript": "^5.7.2"
   },

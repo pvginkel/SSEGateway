@@ -58,6 +58,10 @@ export interface CallbackResult {
   errorType?: 'timeout' | 'network' | 'http_error';
   /** Error message (if request failed or non-2xx) */
   error?: string;
+  /** Request ID returned by backend — used to derive AMQP queue name */
+  requestId?: string;
+  /** AMQP routing key bindings returned by backend — empty/absent means HTTP-only mode */
+  bindings?: string[];
 }
 
 /**
@@ -143,9 +147,28 @@ async function sendCallback(
     });
 
     if (response.ok) {
-      // 2xx status - success
+      // 2xx status - success; attempt to parse optional JSON body for RabbitMQ bindings
       logger.info(`${action} callback succeeded: token=${token} status=${response.status}`);
-      return { success: true, statusCode: response.status };
+
+      let requestId: string | undefined;
+      let bindings: string[] | undefined;
+
+      try {
+        const bodyText = await response.text();
+        if (bodyText) {
+          const parsed = JSON.parse(bodyText) as Record<string, unknown>;
+          if (typeof parsed.request_id === 'string') {
+            requestId = parsed.request_id;
+          }
+          if (Array.isArray(parsed.bindings) && parsed.bindings.every((b) => typeof b === 'string')) {
+            bindings = parsed.bindings as string[];
+          }
+        }
+      } catch {
+        // Body parsing is optional — ignore errors and proceed with HTTP-only mode
+      }
+
+      return { success: true, statusCode: response.status, requestId, bindings };
     } else {
       // Non-2xx status - failure
       const errorMsg = `${action} callback returned non-2xx: token=${token} status=${response.status}`;

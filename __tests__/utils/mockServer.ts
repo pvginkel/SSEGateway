@@ -21,6 +21,16 @@ export interface CallbackRecord {
 }
 
 /**
+ * RabbitMQ callback response body
+ */
+export interface RabbitMQResponseBody {
+  /** Request ID used to derive AMQP queue name */
+  request_id: string;
+  /** Routing key bindings for the connection */
+  bindings: string[];
+}
+
+/**
  * Mock server configuration
  */
 export interface MockServerConfig {
@@ -30,6 +40,8 @@ export interface MockServerConfig {
   statusCode?: number;
   /** Response delay in milliseconds (default: 0) */
   delay?: number;
+  /** Optional RabbitMQ bindings to return in connect response body */
+  rabbitmqResponse?: RabbitMQResponseBody | null;
 }
 
 /**
@@ -47,6 +59,7 @@ export class MockServer {
       port: config.port ?? 0,
       statusCode: config.statusCode ?? 200,
       delay: config.delay ?? 0,
+      rabbitmqResponse: config.rabbitmqResponse ?? null,
     };
 
     this.server = createServer(this.handleRequest.bind(this));
@@ -147,6 +160,15 @@ export class MockServer {
   }
 
   /**
+   * Set the RabbitMQ response body to return for connect callbacks
+   *
+   * @param body - RabbitMQ response body with request_id and bindings, or null to clear
+   */
+  setRabbitMQResponse(body: RabbitMQResponseBody | null): void {
+    this.config.rabbitmqResponse = body as Required<MockServerConfig>['rabbitmqResponse'];
+  }
+
+  /**
    * Handle incoming HTTP requests
    *
    * @param req - Incoming request
@@ -168,9 +190,11 @@ export class MockServer {
 
     req.on('end', () => {
       // Parse callback payload
+      let action: string | undefined;
       try {
         const payload = JSON.parse(body) as CallbackRecord;
         this.callbackRecords.push(payload);
+        action = payload.action;
       } catch (error) {
         // Invalid JSON - ignore for testing purposes
       }
@@ -178,10 +202,10 @@ export class MockServer {
       // Apply delay if configured
       if (this.config.delay > 0) {
         setTimeout(() => {
-          this.sendResponse(res);
+          this.sendResponse(res, action);
         }, this.config.delay);
       } else {
-        this.sendResponse(res);
+        this.sendResponse(res, action);
       }
     });
   }
@@ -189,10 +213,20 @@ export class MockServer {
   /**
    * Send HTTP response
    *
+   * Includes RabbitMQ response body if configured for the current request.
+   * Only includes rabbitmqResponse for connect callbacks (not disconnect).
+   *
    * @param res - Server response
+   * @param action - The callback action ('connect' or 'disconnect')
    */
-  private sendResponse(res: ServerResponse): void {
+  private sendResponse(res: ServerResponse, action?: string): void {
     res.writeHead(this.config.statusCode, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok' }));
+
+    // Include rabbitmq bindings in connect callback response if configured
+    if (action === 'connect' && this.config.rabbitmqResponse) {
+      res.end(JSON.stringify(this.config.rabbitmqResponse));
+    } else {
+      res.end(JSON.stringify({ status: 'ok' }));
+    }
   }
 }

@@ -30,6 +30,8 @@ describe('Heartbeat Functionality', () => {
       port: 3000,
       callbackUrl: mockServer.getCallbackUrl(),
       heartbeatIntervalSeconds: 1, // Short interval for testing
+      rabbitmqUrl: null,
+      rabbitmqQueueTtlMs: 300000,
     };
     app = createApp(config);
   });

@@ -31,6 +31,12 @@ import {
   BACKEND_UNAVAILABLE,
   GATEWAY_TIMEOUT,
 } from '../errors.js';
+import {
+  getChannel,
+  setupConnectionQueue,
+  cancelConsumer,
+  createMessageHandler,
+} from '../rabbitmq.js';
 
 /**
  * Create SSE router with wildcard route handler
@@ -202,6 +208,36 @@ export function createSseRouter(config: Config): express.Router {
     }
     connectionRecord.eventBuffer = []; // Clear buffer after flushing
 
+    // Set up AMQP consumer if the connect callback returned bindings
+    // This happens AFTER the buffer is fully flushed so event ordering is preserved.
+    if (
+      callbackResult.bindings?.length &&
+      callbackResult.requestId &&
+      getChannel() &&
+      config.callbackUrl
+    ) {
+      const queueName = `sse.conn.${callbackResult.requestId}`;
+      try {
+        const messageHandler = createMessageHandler(config.callbackUrl);
+        const consumerTag = await setupConnectionQueue(
+          token,
+          queueName,
+          callbackResult.bindings,
+          config,
+          messageHandler
+        );
+        if (consumerTag) {
+          connectionRecord.amqpQueueName = queueName;
+          connectionRecord.amqpConsumerTag = consumerTag;
+          connectionRecord.amqpBindings = callbackResult.bindings;
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        logger.warn(`AMQP queue setup failed: token=${token} error=${errMsg}`);
+        // Connection continues in HTTP-only mode — no throw
+      }
+    }
+
     // Create heartbeat timer to keep connection alive
     const heartbeatIntervalMs = config.heartbeatIntervalSeconds * 1000;
     const heartbeatTimer = setInterval(() => {
@@ -268,6 +304,11 @@ async function handleDisconnect(
       // Clear heartbeat timer if set
       if (record.heartbeatTimer) {
         clearInterval(record.heartbeatTimer);
+      }
+
+      // Cancel AMQP consumer if one was started for this connection
+      if (record.amqpConsumerTag) {
+        await cancelConsumer(record.amqpConsumerTag);
       }
 
       // Remove from Map

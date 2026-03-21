@@ -11,6 +11,10 @@ export interface Config {
   port: number;
   callbackUrl: string | null;
   heartbeatIntervalSeconds: number;
+  /** RabbitMQ AMQP URL — null disables the RabbitMQ transport */
+  rabbitmqUrl: string | null;
+  /** TTL in milliseconds for per-connection AMQP queues (x-expires argument) */
+  rabbitmqQueueTtlMs: number;
 }
 
 /**
@@ -20,6 +24,8 @@ export interface Config {
  * - PORT: Server port (default: 3000, range: 1-65535)
  * - CALLBACK_URL: Python backend callback endpoint (optional, required for readiness)
  * - HEARTBEAT_INTERVAL_SECONDS: SSE heartbeat interval (default: 15, minimum: 1)
+ * - RABBITMQ_URL: AMQP URL for RabbitMQ transport (optional — disables RabbitMQ if absent)
+ * - RABBITMQ_QUEUE_TTL_MS: TTL for per-connection queues in ms (default: 300000)
  */
 export function loadConfig(): Config {
   // Parse PORT with validation
@@ -52,9 +58,28 @@ export function loadConfig(): Config {
     }
   }
 
+  // Parse RABBITMQ_URL (optional — null disables RabbitMQ transport)
+  const rabbitmqUrl = process.env.RABBITMQ_URL || null;
+
+  // Parse RABBITMQ_QUEUE_TTL_MS with validation and default (5 minutes)
+  const queueTtlEnv = process.env.RABBITMQ_QUEUE_TTL_MS;
+  let rabbitmqQueueTtlMs = 300000; // default: 5 minutes
+
+  if (queueTtlEnv) {
+    const parsed = Number(queueTtlEnv);
+    if (isNaN(parsed) || parsed < 1 || !Number.isInteger(parsed)) {
+      logger.error(`Invalid RABBITMQ_QUEUE_TTL_MS value: "${queueTtlEnv}". Must be an integer >= 1. Using default: 300000`);
+      rabbitmqQueueTtlMs = 300000;
+    } else {
+      rabbitmqQueueTtlMs = parsed;
+    }
+  }
+
   return {
     port,
     callbackUrl,
     heartbeatIntervalSeconds,
+    rabbitmqUrl,
+    rabbitmqQueueTtlMs,
   };
 }

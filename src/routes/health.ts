@@ -6,6 +6,8 @@
 
 import express, { Request, Response } from 'express';
 import type { Config } from '../config.js';
+import { logger } from '../logger.js';
+import { isConnected } from '../rabbitmq.js';
 
 /**
  * Create health check router
@@ -40,6 +42,11 @@ export function createHealthRouter(config: Config): express.Router {
     // Check if CALLBACK_URL is configured
     // Note: config.callbackUrl is null if CALLBACK_URL is missing or empty (handled in config.ts)
     const isConfigured = config.callbackUrl !== null;
+
+    // Warn when RabbitMQ is configured but not yet connected (soft dependency)
+    if (config.rabbitmqUrl && !isConnected()) {
+      logger.warn('RabbitMQ configured but not connected');
+    }
 
     if (isConfigured) {
       res.status(200).json({

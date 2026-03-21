@@ -28,6 +28,12 @@ export interface ConnectionRecord {
   ready: boolean;
   /** Buffer for events received before stream is ready */
   eventBuffer: Array<{ name?: string; data: string; close?: boolean }>;
+  /** AMQP queue name for this connection (set after queue assertion succeeds) */
+  amqpQueueName?: string;
+  /** AMQP consumer tag for this connection (set after channel.consume succeeds) */
+  amqpConsumerTag?: string;
+  /** AMQP routing key bindings for this connection (stored for re-bind on reconnect) */
+  amqpBindings?: string[];
 }
 
 /**

@@ -18,6 +18,8 @@ describe('Health Endpoints', () => {
         port: 3000,
         callbackUrl: null,
         heartbeatIntervalSeconds: 15,
+        rabbitmqUrl: null,
+        rabbitmqQueueTtlMs: 300000,
       };
       app = createApp(config);
     });
@@ -44,9 +46,9 @@ describe('Health Endpoints', () => {
     it('should always return 200 regardless of configuration', async () => {
       // Test with different configs
       const configs: Config[] = [
-        { port: 3000, callbackUrl: null, heartbeatIntervalSeconds: 15 },
-        { port: 3000, callbackUrl: 'http://backend/callback', heartbeatIntervalSeconds: 30 },
-        { port: 8080, callbackUrl: null, heartbeatIntervalSeconds: 1 },
+        { port: 3000, callbackUrl: null, heartbeatIntervalSeconds: 15, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000 },
+        { port: 3000, callbackUrl: 'http://backend/callback', heartbeatIntervalSeconds: 30, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000 },
+        { port: 8080, callbackUrl: null, heartbeatIntervalSeconds: 1, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000 },
       ];
 
       for (const config of configs) {
@@ -63,6 +65,8 @@ describe('Health Endpoints', () => {
         port: 3000,
         callbackUrl: 'http://backend/callback',
         heartbeatIntervalSeconds: 15,
+        rabbitmqUrl: null,
+        rabbitmqQueueTtlMs: 300000,
       };
       const app = createApp(config);
 
@@ -80,6 +84,8 @@ describe('Health Endpoints', () => {
         port: 3000,
         callbackUrl: null,
         heartbeatIntervalSeconds: 15,
+        rabbitmqUrl: null,
+        rabbitmqQueueTtlMs: 300000,
       };
       const app = createApp(config);
 
@@ -100,6 +106,8 @@ describe('Health Endpoints', () => {
         port: 3000,
         callbackUrl: 'http://backend/callback',
         heartbeatIntervalSeconds: 15,
+        rabbitmqUrl: null,
+        rabbitmqQueueTtlMs: 300000,
       };
       const app = createApp(config);
 

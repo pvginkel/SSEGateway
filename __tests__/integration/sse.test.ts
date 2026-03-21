@@ -29,6 +29,8 @@ describe('SSE Connection Flow', () => {
       port: 3000,
       callbackUrl: mockServer.getCallbackUrl(),
       heartbeatIntervalSeconds: 15,
+      rabbitmqUrl: null,
+      rabbitmqQueueTtlMs: 300000,
     };
     app = createApp(config);
   });
@@ -344,6 +346,8 @@ describe('SSE Connection Flow', () => {
         port: 3000,
         callbackUrl: null,
         heartbeatIntervalSeconds: 15,
+        rabbitmqUrl: null,
+        rabbitmqQueueTtlMs: 300000,
       });
 
       const response = await request(appWithoutCallback).get('/sse/test');
