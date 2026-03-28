@@ -32,7 +32,7 @@ describe('Heartbeat Functionality', () => {
       heartbeatIntervalSeconds: 1, // Short interval for testing
       rabbitmqUrl: null,
       rabbitmqQueueTtlMs: 300000,
-      rabbitmqExchangePrefix: '',
+      rabbitmqEnvPrefix: '',
     };
     app = createApp(config);
   });

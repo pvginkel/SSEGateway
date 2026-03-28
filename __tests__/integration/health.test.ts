@@ -20,7 +20,7 @@ describe('Health Endpoints', () => {
         heartbeatIntervalSeconds: 15,
         rabbitmqUrl: null,
         rabbitmqQueueTtlMs: 300000,
-        rabbitmqExchangePrefix: '',
+        rabbitmqEnvPrefix: '',
       };
       app = createApp(config);
     });
@@ -47,9 +47,9 @@ describe('Health Endpoints', () => {
     it('should always return 200 regardless of configuration', async () => {
       // Test with different configs
       const configs: Config[] = [
-        { port: 3000, callbackUrl: null, heartbeatIntervalSeconds: 15, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000, rabbitmqExchangePrefix: '' },
-        { port: 3000, callbackUrl: 'http://backend/callback', heartbeatIntervalSeconds: 30, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000, rabbitmqExchangePrefix: '' },
-        { port: 8080, callbackUrl: null, heartbeatIntervalSeconds: 1, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000, rabbitmqExchangePrefix: '' },
+        { port: 3000, callbackUrl: null, heartbeatIntervalSeconds: 15, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000, rabbitmqEnvPrefix: '' },
+        { port: 3000, callbackUrl: 'http://backend/callback', heartbeatIntervalSeconds: 30, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000, rabbitmqEnvPrefix: '' },
+        { port: 8080, callbackUrl: null, heartbeatIntervalSeconds: 1, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000, rabbitmqEnvPrefix: '' },
       ];
 
       for (const config of configs) {
@@ -68,7 +68,7 @@ describe('Health Endpoints', () => {
         heartbeatIntervalSeconds: 15,
         rabbitmqUrl: null,
         rabbitmqQueueTtlMs: 300000,
-        rabbitmqExchangePrefix: '',
+        rabbitmqEnvPrefix: '',
       };
       const app = createApp(config);
 
@@ -89,7 +89,7 @@ describe('Health Endpoints', () => {
         heartbeatIntervalSeconds: 15,
         rabbitmqUrl: null,
         rabbitmqQueueTtlMs: 300000,
-        rabbitmqExchangePrefix: '',
+        rabbitmqEnvPrefix: '',
       };
       const app = createApp(config);
 
@@ -108,7 +108,7 @@ describe('Health Endpoints', () => {
         heartbeatIntervalSeconds: 15,
         rabbitmqUrl: 'amqp://localhost:5672',
         rabbitmqQueueTtlMs: 300000,
-        rabbitmqExchangePrefix: '',
+        rabbitmqEnvPrefix: '',
       };
       // Note: we create the app but do NOT call connectRabbitMQ, so isConnected() is false
       const app = createApp(config);
@@ -131,7 +131,7 @@ describe('Health Endpoints', () => {
         heartbeatIntervalSeconds: 15,
         rabbitmqUrl: null,
         rabbitmqQueueTtlMs: 300000,
-        rabbitmqExchangePrefix: '',
+        rabbitmqEnvPrefix: '',
       };
       const app = createApp(config);
 

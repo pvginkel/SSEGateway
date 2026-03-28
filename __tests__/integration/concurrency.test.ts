@@ -39,7 +39,7 @@ describe('Concurrent Connections', () => {
       heartbeatIntervalSeconds: 1,
       rabbitmqUrl: null,
       rabbitmqQueueTtlMs: 300000,
-      rabbitmqExchangePrefix: '',
+      rabbitmqEnvPrefix: '',
     };
     app = createApp(config);
   });

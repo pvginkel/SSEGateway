@@ -31,7 +31,7 @@ describe('SSE Connection Flow', () => {
       heartbeatIntervalSeconds: 15,
       rabbitmqUrl: null,
       rabbitmqQueueTtlMs: 300000,
-      rabbitmqExchangePrefix: '',
+      rabbitmqEnvPrefix: '',
     };
     app = createApp(config);
   });
@@ -349,7 +349,7 @@ describe('SSE Connection Flow', () => {
         heartbeatIntervalSeconds: 15,
         rabbitmqUrl: null,
         rabbitmqQueueTtlMs: 300000,
-        rabbitmqExchangePrefix: '',
+        rabbitmqEnvPrefix: '',
       });
 
       const response = await request(appWithoutCallback).get('/sse/test');

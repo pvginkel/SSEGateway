@@ -17,7 +17,7 @@ function makeConfig() {
     heartbeatIntervalSeconds: 15,
     rabbitmqUrl: 'amqp://guest:guest@localhost:5672/',
     rabbitmqQueueTtlMs: 300000,
-    rabbitmqExchangePrefix: '',
+    rabbitmqEnvPrefix: '',
   };
 }
 

@@ -70,8 +70,8 @@ export async function connectRabbitMQ(config: Config): Promise<void> {
   reconnecting = false;
 
   // Compute the exchange name with optional prefix for environment isolation
-  sseEventsExchange = config.rabbitmqExchangePrefix
-    ? `${config.rabbitmqExchangePrefix}.sse.events`
+  sseEventsExchange = config.rabbitmqEnvPrefix
+    ? `${config.rabbitmqEnvPrefix}.sse.events`
     : 'sse.events';
 
   await doConnect(config);
