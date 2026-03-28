@@ -6,7 +6,6 @@
 
 import express, { Request, Response } from 'express';
 import type { Config } from '../config.js';
-import { logger } from '../logger.js';
 import { isConnected } from '../rabbitmq.js';
 
 /**
@@ -43,20 +42,25 @@ export function createHealthRouter(config: Config): express.Router {
     // Note: config.callbackUrl is null if CALLBACK_URL is missing or empty (handled in config.ts)
     const isConfigured = config.callbackUrl !== null;
 
-    // Warn when RabbitMQ is configured but not yet connected (soft dependency)
-    if (config.rabbitmqUrl && !isConnected()) {
-      logger.warn('RabbitMQ configured but not connected');
-    }
+    // RabbitMQ is a hard dependency when configured — not ready until connected
+    const rabbitmqReady = !config.rabbitmqUrl || isConnected();
 
-    if (isConfigured) {
+    if (isConfigured && rabbitmqReady) {
       res.status(200).json({
         status: 'ready',
         configured: true,
+        rabbitmq: config.rabbitmqUrl ? 'connected' : 'disabled',
       });
     } else {
+      const reasons: string[] = [];
+      if (!isConfigured) reasons.push('CALLBACK_URL not configured');
+      if (!rabbitmqReady) reasons.push('RabbitMQ not connected');
+
       res.status(503).json({
         status: 'not_ready',
-        configured: false,
+        configured: isConfigured,
+        rabbitmq: config.rabbitmqUrl ? (isConnected() ? 'connected' : 'disconnected') : 'disabled',
+        reasons,
       });
     }
   });

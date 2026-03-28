@@ -44,6 +44,7 @@ export const BACKEND_FORBIDDEN = 'BACKEND_FORBIDDEN';
 export const BACKEND_ERROR = 'BACKEND_ERROR';
 export const BACKEND_UNAVAILABLE = 'BACKEND_UNAVAILABLE';
 export const GATEWAY_TIMEOUT = 'GATEWAY_TIMEOUT';
+export const RABBITMQ_UNAVAILABLE = 'RABBITMQ_UNAVAILABLE';
 
 /**
  * Helper function to send structured error response

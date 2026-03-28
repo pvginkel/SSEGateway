@@ -15,6 +15,8 @@ export interface Config {
   rabbitmqUrl: string | null;
   /** TTL in milliseconds for per-connection AMQP queues (x-expires argument) */
   rabbitmqQueueTtlMs: number;
+  /** Prefix for the SSE events exchange name (environment isolation) */
+  rabbitmqExchangePrefix: string;
 }
 
 /**
@@ -26,6 +28,7 @@ export interface Config {
  * - HEARTBEAT_INTERVAL_SECONDS: SSE heartbeat interval (default: 15, minimum: 1)
  * - RABBITMQ_URL: AMQP URL for RabbitMQ transport (optional — disables RabbitMQ if absent)
  * - RABBITMQ_QUEUE_TTL_MS: TTL for per-connection queues in ms (default: 300000)
+ * - RABBITMQ_EXCHANGE_PREFIX: Prefix for exchange name for environment isolation (optional, default: none)
  */
 export function loadConfig(): Config {
   // Parse PORT with validation
@@ -75,11 +78,15 @@ export function loadConfig(): Config {
     }
   }
 
+  // Parse RABBITMQ_EXCHANGE_PREFIX (optional — empty string means no prefix)
+  const rabbitmqExchangePrefix = process.env.RABBITMQ_EXCHANGE_PREFIX || '';
+
   return {
     port,
     callbackUrl,
     heartbeatIntervalSeconds,
     rabbitmqUrl,
     rabbitmqQueueTtlMs,
+    rabbitmqExchangePrefix,
   };
 }

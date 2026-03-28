@@ -31,6 +31,7 @@ describe('Send and Close Operations', () => {
       heartbeatIntervalSeconds: 15,
       rabbitmqUrl: null,
       rabbitmqQueueTtlMs: 300000,
+      rabbitmqExchangePrefix: '',
     };
     app = createApp(config);
   });

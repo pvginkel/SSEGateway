@@ -41,6 +41,9 @@ let shutdownRequested = false;
 /** Prevents double-fire of handleConnectionLoss (error + close both fire on connection loss) */
 let reconnecting = false;
 
+/** Computed SSE events exchange name (may be prefixed for environment isolation) */
+let sseEventsExchange = 'sse.events';
+
 /** Current reconnect backoff delay in milliseconds (doubles on each retry, capped at 30 s) */
 let reconnectDelayMs = 1000;
 
@@ -65,7 +68,20 @@ const consumerTagToToken = new Map<string, string>();
 export async function connectRabbitMQ(config: Config): Promise<void> {
   shutdownRequested = false;
   reconnecting = false;
+
+  // Compute the exchange name with optional prefix for environment isolation
+  sseEventsExchange = config.rabbitmqExchangePrefix
+    ? `${config.rabbitmqExchangePrefix}.sse.events`
+    : 'sse.events';
+
   await doConnect(config);
+}
+
+/**
+ * Returns the computed SSE events exchange name (possibly prefixed).
+ */
+export function getExchangeName(): string {
+  return sseEventsExchange;
 }
 
 /**
@@ -169,7 +185,7 @@ export async function setupConnectionQueue(
 
   // Bind each routing key to the topic exchange
   for (const key of bindings) {
-    await ch.bindQueue(queueName, 'sse.events', key);
+    await ch.bindQueue(queueName, sseEventsExchange, key);
   }
 
   // Wrap the message handler to auto-register the consumer tag on first delivery.
@@ -408,7 +424,7 @@ async function doConnect(config: Config): Promise<void> {
     await ch.prefetch(10);
 
     // Assert the topic exchange (idempotent — safe on reconnect)
-    await ch.assertExchange('sse.events', 'topic', { durable: true });
+    await ch.assertExchange(sseEventsExchange, 'topic', { durable: true });
 
     // Mark as connected
     connected = true;
@@ -521,7 +537,7 @@ async function reestablishConsumers(config: Config): Promise<void> {
       // (bindQueue is idempotent, safe in all cases)
       if (record.amqpBindings) {
         for (const key of record.amqpBindings) {
-          await ch.bindQueue(record.amqpQueueName, 'sse.events', key);
+          await ch.bindQueue(record.amqpQueueName, sseEventsExchange, key);
         }
       }
 

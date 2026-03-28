@@ -20,6 +20,7 @@ describe('Health Endpoints', () => {
         heartbeatIntervalSeconds: 15,
         rabbitmqUrl: null,
         rabbitmqQueueTtlMs: 300000,
+        rabbitmqExchangePrefix: '',
       };
       app = createApp(config);
     });
@@ -46,9 +47,9 @@ describe('Health Endpoints', () => {
     it('should always return 200 regardless of configuration', async () => {
       // Test with different configs
       const configs: Config[] = [
-        { port: 3000, callbackUrl: null, heartbeatIntervalSeconds: 15, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000 },
-        { port: 3000, callbackUrl: 'http://backend/callback', heartbeatIntervalSeconds: 30, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000 },
-        { port: 8080, callbackUrl: null, heartbeatIntervalSeconds: 1, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000 },
+        { port: 3000, callbackUrl: null, heartbeatIntervalSeconds: 15, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000, rabbitmqExchangePrefix: '' },
+        { port: 3000, callbackUrl: 'http://backend/callback', heartbeatIntervalSeconds: 30, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000, rabbitmqExchangePrefix: '' },
+        { port: 8080, callbackUrl: null, heartbeatIntervalSeconds: 1, rabbitmqUrl: null, rabbitmqQueueTtlMs: 300000, rabbitmqExchangePrefix: '' },
       ];
 
       for (const config of configs) {
@@ -60,13 +61,14 @@ describe('Health Endpoints', () => {
   });
 
   describe('GET /readyz', () => {
-    it('should return 200 when CALLBACK_URL is configured', async () => {
+    it('should return 200 when CALLBACK_URL is configured and RabbitMQ is disabled', async () => {
       const config: Config = {
         port: 3000,
         callbackUrl: 'http://backend/callback',
         heartbeatIntervalSeconds: 15,
         rabbitmqUrl: null,
         rabbitmqQueueTtlMs: 300000,
+        rabbitmqExchangePrefix: '',
       };
       const app = createApp(config);
 
@@ -76,6 +78,7 @@ describe('Health Endpoints', () => {
       expect(response.body).toEqual({
         status: 'ready',
         configured: true,
+        rabbitmq: 'disabled',
       });
     });
 
@@ -86,16 +89,36 @@ describe('Health Endpoints', () => {
         heartbeatIntervalSeconds: 15,
         rabbitmqUrl: null,
         rabbitmqQueueTtlMs: 300000,
+        rabbitmqExchangePrefix: '',
       };
       const app = createApp(config);
 
       const response = await request(app).get('/readyz');
 
       expect(response.status).toBe(503);
-      expect(response.body).toEqual({
-        status: 'not_ready',
-        configured: false,
-      });
+      expect(response.body.status).toBe('not_ready');
+      expect(response.body.configured).toBe(false);
+      expect(response.body.reasons).toContain('CALLBACK_URL not configured');
+    });
+
+    it('should return 503 when RabbitMQ is configured but not connected', async () => {
+      const config: Config = {
+        port: 3000,
+        callbackUrl: 'http://backend/callback',
+        heartbeatIntervalSeconds: 15,
+        rabbitmqUrl: 'amqp://localhost:5672',
+        rabbitmqQueueTtlMs: 300000,
+        rabbitmqExchangePrefix: '',
+      };
+      // Note: we create the app but do NOT call connectRabbitMQ, so isConnected() is false
+      const app = createApp(config);
+
+      const response = await request(app).get('/readyz');
+
+      expect(response.status).toBe(503);
+      expect(response.body.status).toBe('not_ready');
+      expect(response.body.rabbitmq).toBe('disconnected');
+      expect(response.body.reasons).toContain('RabbitMQ not connected');
     });
 
     // Note: No test for empty string callbackUrl because config.ts converts empty strings
@@ -108,6 +131,7 @@ describe('Health Endpoints', () => {
         heartbeatIntervalSeconds: 15,
         rabbitmqUrl: null,
         rabbitmqQueueTtlMs: 300000,
+        rabbitmqExchangePrefix: '',
       };
       const app = createApp(config);
 

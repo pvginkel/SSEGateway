@@ -24,6 +24,7 @@ function makeConfig(overrides: Partial<{
   callbackUrl: string | null;
   heartbeatIntervalSeconds: number;
   port: number;
+  rabbitmqExchangePrefix: string;
 }> = {}) {
   return {
     port: 3000,
@@ -31,6 +32,7 @@ function makeConfig(overrides: Partial<{
     heartbeatIntervalSeconds: 15,
     rabbitmqUrl: 'amqp://guest:guest@localhost:5672/',
     rabbitmqQueueTtlMs: 300000,
+    rabbitmqExchangePrefix: '',
     ...overrides,
   };
 }

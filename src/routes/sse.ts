@@ -30,9 +30,11 @@ import {
   BACKEND_ERROR,
   BACKEND_UNAVAILABLE,
   GATEWAY_TIMEOUT,
+  RABBITMQ_UNAVAILABLE,
 } from '../errors.js';
 import {
   getChannel,
+  isConnected,
   setupConnectionQueue,
   cancelConsumer,
   createMessageHandler,
@@ -64,6 +66,13 @@ export function createSseRouter(config: Config): express.Router {
     if (!config.callbackUrl) {
       logger.error('SSE connection rejected: CALLBACK_URL not configured');
       respondWithError(res, 503, 'Service not configured', SERVICE_NOT_CONFIGURED);
+      return;
+    }
+
+    // Reject new connections when RabbitMQ is configured but not connected
+    if (config.rabbitmqUrl && !isConnected()) {
+      logger.error('SSE connection rejected: RabbitMQ not connected');
+      respondWithError(res, 503, 'RabbitMQ unavailable', RABBITMQ_UNAVAILABLE);
       return;
     }
 

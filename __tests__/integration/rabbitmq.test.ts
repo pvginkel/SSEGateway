@@ -46,6 +46,7 @@ function makeConfig(callbackUrl: string, overrides: Partial<Config> = {}): Confi
     heartbeatIntervalSeconds: 60, // Long interval so heartbeats don't interfere with timing
     rabbitmqUrl: RABBITMQ_URL,
     rabbitmqQueueTtlMs: 60000, // 1 minute TTL for test queues
+    rabbitmqExchangePrefix: '',
     ...overrides,
   };
 }
@@ -416,6 +417,7 @@ describe('RabbitMQ integration tests', () => {
       heartbeatIntervalSeconds: 60,
       rabbitmqUrl: null,
       rabbitmqQueueTtlMs: 300000,
+      rabbitmqExchangePrefix: '',
     };
 
     mockServer.setRabbitMQResponse({
