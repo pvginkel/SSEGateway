@@ -22,6 +22,7 @@ import {
   type CallbackRequest,
 } from '../callback.js';
 import { handleEventAndClose } from './internal.js';
+import { formatSseEvent } from '../sse.js';
 import {
   respondWithError,
   SERVICE_NOT_CONFIGURED,
@@ -245,6 +246,18 @@ export function createSseRouter(config: Config): express.Router {
         logger.warn(`AMQP queue setup failed: token=${token} error=${errMsg}`);
         // Connection continues in HTTP-only mode — no throw
       }
+    }
+
+    // Signal the client that the connection is fully ready.
+    // With AMQP: sent after bindings are confirmed by the broker.
+    // Without AMQP (HTTP-only mode) or AMQP setup failed: sent immediately.
+    // Clients must wait for this event before treating the connection as established.
+    try {
+      const readyEvent = formatSseEvent('ready', '{}');
+      res.write(readyEvent);
+    } catch {
+      // Write failed — client already disconnected
+      return;
     }
 
     // Create heartbeat timer to keep connection alive

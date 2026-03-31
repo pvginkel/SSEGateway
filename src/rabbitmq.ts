@@ -549,6 +549,13 @@ async function reestablishConsumers(config: Config): Promise<void> {
       consumerTagToToken.set(newTag, token);
       reestablished++;
 
+      // Re-send ready event so the client knows bindings are restored
+      try {
+        record.res.write(formatSseEvent('ready', '{}'));
+      } catch {
+        // Write failed — client disconnected, will be cleaned up
+      }
+
       logger.info(
         `AMQP consumer re-established: token=${token} queue=${record.amqpQueueName} consumerTag=${newTag}`
       );

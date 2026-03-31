@@ -129,6 +129,20 @@ async function waitForEvents(reader: SseStreamReader, count: number, timeoutMs =
   return false;
 }
 
+/**
+ * Shorthand: get application events from reader (excludes internal `ready` event).
+ */
+function getAppEvents(reader: SseStreamReader) {
+  return reader.getApplicationEvents();
+}
+
+/**
+ * Shorthand: wait for N application events (excludes internal `ready` event).
+ */
+function waitForAppEvents(reader: SseStreamReader, count: number, timeoutMs = MESSAGE_DELIVERY_TIMEOUT_MS) {
+  return reader.waitForApplicationEvents(count, timeoutMs);
+}
+
 // ---------------------------------------------------------------------------
 // Test suite setup / teardown
 // ---------------------------------------------------------------------------
@@ -230,10 +244,10 @@ describe('RabbitMQ integration tests', () => {
     await publishMessage(publishChannel, routingKey, 'ping', '"pong"');
 
     // Wait for delivery
-    const delivered = await waitForEvents(reader, 1);
+    const delivered = await waitForAppEvents(reader, 1);
     expect(delivered).toBe(true);
 
-    const events = reader.getEvents();
+    const events = getAppEvents(reader);
     expect(events.length).toBeGreaterThanOrEqual(1);
 
     // The event data should contain 'pong' (wrapped in envelope since 'ping' is not passthrough)
@@ -268,10 +282,10 @@ describe('RabbitMQ integration tests', () => {
     await publishMessage(publishChannel, routingKey, 'msg', '"second"');
     await publishMessage(publishChannel, routingKey, 'msg', '"third"');
 
-    const delivered = await waitForEvents(reader, 3);
+    const delivered = await waitForAppEvents(reader, 3);
     expect(delivered).toBe(true);
 
-    const events = reader.getEvents();
+    const events = getAppEvents(reader);
     expect(events.length).toBeGreaterThanOrEqual(3);
 
     // Verify order by checking data content
@@ -314,13 +328,13 @@ describe('RabbitMQ integration tests', () => {
     await publishMessage(publishChannel, keyA, 'for-a', '"hello-A"');
 
     // Wait for delivery
-    await waitForEvents(streamA.reader, 1);
+    await waitForAppEvents(streamA.reader, 1);
     await new Promise((r) => setTimeout(r, 300)); // Extra time to ensure B doesn't get it
 
-    // A should receive the event, B should not
-    expect(streamA.reader.getEventCount()).toBeGreaterThanOrEqual(1);
-    expect(streamA.reader.getEvents()[0].data).toContain('hello-A');
-    expect(streamB.reader.getEventCount()).toBe(0);
+    // A should receive the event, B should not (both get the ready event, only A gets the app event)
+    expect(getAppEvents(streamA.reader).length).toBeGreaterThanOrEqual(1);
+    expect(getAppEvents(streamA.reader)[0].data).toContain('hello-A');
+    expect(getAppEvents(streamB.reader).length).toBe(0);
 
     streamA.cleanup();
     streamB.cleanup();
@@ -355,10 +369,10 @@ describe('RabbitMQ integration tests', () => {
     await publishMessage(publishChannel, routingKey, 'amqp_event', '"from-amqp"');
 
     // Wait for both events
-    const delivered = await waitForEvents(reader, 2);
+    const delivered = await waitForAppEvents(reader, 2);
     expect(delivered).toBe(true);
 
-    const events = reader.getEvents();
+    const events = getAppEvents(reader);
     expect(events.length).toBeGreaterThanOrEqual(2);
 
     // Both events should be present
@@ -392,10 +406,10 @@ describe('RabbitMQ integration tests', () => {
       .post('/internal/send')
       .send({ token, event: { name: 'http_only', data: '"works"' } });
 
-    const delivered = await waitForEvents(reader, 1);
+    const delivered = await waitForAppEvents(reader, 1);
     expect(delivered).toBe(true);
 
-    const events = reader.getEvents();
+    const events = getAppEvents(reader);
     expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events[0].data).toContain('works');
 
@@ -446,10 +460,10 @@ describe('RabbitMQ integration tests', () => {
         .post('/internal/send')
         .send({ token, event: { data: '"no-rabbit-works"' } });
 
-      const delivered = await waitForEvents(reader, 1);
+      const delivered = await waitForAppEvents(reader, 1);
       expect(delivered).toBe(true);
 
-      const events = reader.getEvents();
+      const events = getAppEvents(reader);
       expect(events.length).toBeGreaterThanOrEqual(1);
 
       cleanup();
@@ -486,8 +500,8 @@ describe('RabbitMQ integration tests', () => {
 
     // Publish a message during the first connection
     await publishMessage(publishChannel, routingKey, 'during-first', '"msg1"');
-    await waitForEvents(stream1.reader, 1);
-    expect(stream1.reader.getEventCount()).toBeGreaterThanOrEqual(1);
+    await waitForAppEvents(stream1.reader, 1);
+    expect(getAppEvents(stream1.reader).length).toBeGreaterThanOrEqual(1);
 
     // Close the first connection
     stream1.cleanup();
@@ -509,10 +523,10 @@ describe('RabbitMQ integration tests', () => {
     expect(record2.amqpQueueName).toBe(queueName);
 
     // The message published during disconnect should be delivered
-    const delivered = await waitForEvents(stream2.reader, 1);
+    const delivered = await waitForAppEvents(stream2.reader, 1);
     expect(delivered).toBe(true);
 
-    const events2 = stream2.reader.getEvents();
+    const events2 = getAppEvents(stream2.reader);
     expect(events2.length).toBeGreaterThanOrEqual(1);
     expect(events2[0].data).toContain('msg2');
 

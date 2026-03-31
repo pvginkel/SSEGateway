@@ -167,6 +167,47 @@ export class SseStreamReader {
   }
 
   /**
+   * Get application events (excluding internal plumbing like the `ready` event).
+   * The `ready` event is sent by the gateway after AMQP bindings are established.
+   *
+   * @returns Array of application event items
+   */
+  getApplicationEvents(): SseStreamItem[] {
+    return this.getEvents().filter(
+      (item) => !item.data?.includes('"type":"ready"')
+    );
+  }
+
+  /**
+   * Get count of application events (excluding internal plumbing)
+   *
+   * @returns Number of application events
+   */
+  getApplicationEventCount(): number {
+    return this.getApplicationEvents().length;
+  }
+
+  /**
+   * Wait for at least N application events (excluding internal plumbing), with timeout.
+   *
+   * @param count - Minimum number of application events to wait for
+   * @param timeoutMs - Maximum time to wait (milliseconds)
+   * @returns Promise that resolves when condition is met or timeout expires
+   */
+  async waitForApplicationEvents(count: number, timeoutMs: number): Promise<boolean> {
+    const endTime = Date.now() + timeoutMs;
+
+    while (Date.now() < endTime) {
+      if (this.getApplicationEventCount() >= count) {
+        return true;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    return false;
+  }
+
+  /**
    * Get all comments (including heartbeats)
    *
    * @returns Array of comment items
