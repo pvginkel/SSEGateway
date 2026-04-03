@@ -1,362 +1,149 @@
-# SSEGateway
+# SSE Gateway
 
-A lightweight Node.js sidecar service that terminates Server-Sent Event (SSE) connections and coordinates with a Python backend. SSEGateway is designed to handle the long-lived nature of SSE connections while allowing your Python application to focus on business logic.
+Node.js sidecar that terminates Server-Sent Event (SSE) connections on behalf of a backend application. It is **not** an HTTP reverse proxy — it owns the SSE stream lifecycle and delegates authorization, identity, and event origination to the backend via callbacks and AMQP.
 
-## Features
+## How it works
 
-- **SSE Connection Management**: Handles SSE connection lifecycle (connect, send events, disconnect)
-- **Backend Coordination**: Notifies Python backend of connection events via callbacks
-- **Universal Path Support**: Accepts SSE connections on any path, forwarding raw URLs to backend
-- **Automatic Heartbeats**: Configurable heartbeat mechanism to keep connections alive
-- **Health Checks**: Built-in `/healthz` and `/readyz` endpoints for orchestration
-- **TypeScript**: Fully typed with TypeScript for better developer experience
-- **Production Ready**: Docker support, comprehensive test suite, and CI/CD pipeline
+1. A browser opens an SSE connection to the gateway (any path).
+2. The gateway calls the backend's callback URL with `action: connect`, forwarding the raw URL and headers.
+3. The backend authenticates the request, resolves identity, and returns `request_id`, `subject`, `role`, and a list of AMQP `bindings` (routing keys).
+4. The gateway creates a per-connection AMQP queue, binds it to the `sse.events` topic exchange using the returned routing keys, and starts consuming.
+5. Messages arriving on the queue are formatted as SSE events and written to the client's stream.
+6. On disconnect (client or server), the gateway calls the backend with `action: disconnect` and cleans up the queue.
 
-## Architecture
+When AMQP is not configured, the gateway operates in HTTP-only mode — events are delivered via `POST /internal/send` instead.
 
-SSEGateway is **not** an HTTP reverse proxy. It owns the SSE connection lifecycle and acts as a coordinator between clients and your Python backend:
+## Event formatting
+
+Domain events from AMQP are wrapped in an **unnamed envelope** so the browser receives them via a single `EventSource.onmessage` handler:
 
 ```
-Client (SSE) <---> SSEGateway <---> Python Backend (HTTP callbacks)
+data: {"type":"<event_name>","payload":<data>}\n\n
 ```
 
-### How It Works
+The `ready` event is the exception — it is a **named SSE event with no data line**, keeping it out of the domain message flow:
 
-1. Client connects to any path (e.g., `/events`, `/channel/123`)
-2. SSEGateway generates a unique token and makes a `connect` callback to Python
-3. Python validates the connection and returns 200 (accept) or non-2xx (reject)
-4. Python sends events via `POST /internal/send` with the connection token
-5. SSEGateway forwards events to the client over SSE
-6. On disconnect, SSEGateway notifies Python with a `disconnect` callback
-
-### Design Principles
-
-- **Single process, single-threaded**: No clustering (ensures event ordering)
-- **In-memory state only**: No persistence layer
-- **Immediate flushing**: Every SSE write flushes immediately
-- **Best-effort callbacks**: No retries on callback failures
-- **No compression**: SSE output never compressed
-
-## Installation
-
-### Requirements
-
-- Node.js 20 LTS or higher
-- Python backend service (for callbacks)
-
-### Install Dependencies
-
-```bash
-npm install
+```
+event: ready\n\n
 ```
 
-### Build
+The `ready` event is sent after AMQP queue bindings are confirmed (or immediately in HTTP-only mode). Clients must wait for it before treating the connection as established. It is re-sent after AMQP reconnection and rebinding.
 
-```bash
-npm run build
-```
+## Endpoints
 
-### Run
+### `GET /<any-path>` — SSE stream
 
-```bash
-npm start
-```
+Accepts any path. The raw URL and headers are forwarded to the callback. Returns `text/event-stream`.
 
-## Configuration
+If the callback returns non-2xx, the gateway returns the same status code to the client (no SSE stream opened).
 
-Configure via environment variables:
+### `POST /internal/send` — send event / close connection
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `CALLBACK_URL` | **Yes** | - | Python backend callback endpoint (e.g., `http://localhost:8000/sse/callback`) |
-| `PORT` | No | `3000` | Port for SSEGateway to listen on |
-| `HEARTBEAT_INTERVAL_SECONDS` | No | `15` | Interval for SSE heartbeat comments |
-
-### Example
-
-```bash
-export CALLBACK_URL=http://localhost:8000/sse/callback
-export PORT=3000
-export HEARTBEAT_INTERVAL_SECONDS=15
-npm start
-```
-
-## API
-
-### SSE Endpoint
-
-**`GET /*`** - Accept SSE connections on any path
-
-SSEGateway accepts connections on **any path** and forwards the raw URL to your Python backend.
-
-**Example:**
-```bash
-curl -N http://localhost:3000/channel/updates?user=123
-```
-
-**Flow:**
-1. Client connects
-2. SSEGateway generates token: `550e8400-e29b-41d4-a716-446655440000`
-3. Calls Python: `POST $CALLBACK_URL`
-   ```json
-   {
-     "action": "connect",
-     "token": "550e8400-e29b-41d4-a716-446655440000",
-     "request": {
-       "url": "/channel/updates?user=123",
-       "headers": {
-         "user-agent": "curl/7.68.0",
-         ...
-       }
-     }
-   }
-   ```
-4. If Python returns 200, connection stays open
-5. If Python returns non-2xx, connection closes immediately with same status
-
-### Send/Close Endpoint
-
-**`POST /internal/send`** - Send events or close connections (called by Python)
-
-**Request Body:**
 ```json
 {
-  "token": "550e8400-e29b-41d4-a716-446655440000",
-  "event": {
-    "name": "message",
-    "data": "Hello, World!"
-  },
+  "token": "string",
+  "event": { "name": "string", "data": "string" },
   "close": true
 }
 ```
 
-**Fields:**
-- `token` (required): Connection token from connect callback
-- `event` (optional): Event to send
-  - `name` (optional): SSE event name
-  - `data` (required): Event data (string)
-- `close` (optional): If true, close connection after sending event
+- `token` — required. The connection UUID.
+- `event` — optional. If present, `data` is required; `name` is optional.
+- `close` — optional. If `true`, the connection is closed after the event is sent.
+- If both `event` and `close` are present, the event is sent first, then the connection is closed.
+- Unknown token returns 404.
 
-**Responses:**
-- `200`: Success
-- `400`: Invalid request (bad types or missing required fields)
-- `404`: Unknown token (connection not found)
+### `GET /healthz` — liveness
 
-**Examples:**
+Always returns 200.
 
-Send an event:
-```bash
-curl -X POST http://localhost:3000/internal/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "token": "550e8400-e29b-41d4-a716-446655440000",
-    "event": {
-      "name": "update",
-      "data": "New data available"
-    }
-  }'
+### `GET /readyz` — readiness
+
+Returns 200 when the callback URL is configured and initialization is complete. Otherwise 503.
+
+## Callback protocol
+
+The gateway POSTs to the configured `CALLBACK_URL`:
+
+**Connect:**
+
+```json
+{
+  "action": "connect",
+  "token": "<uuid>",
+  "request": { "url": "<raw-url>", "headers": { ... } }
+}
 ```
 
-Send event and close:
-```bash
-curl -X POST http://localhost:3000/internal/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "token": "550e8400-e29b-41d4-a716-446655440000",
-    "event": {
-      "name": "goodbye",
-      "data": "Connection closing"
-    },
-    "close": true
-  }'
+The backend responds with:
+
+```json
+{
+  "request_id": "abc123",
+  "subject": "keycloak-sub-uuid",
+  "role": "editor",
+  "bindings": ["broadcast", "connection.abc123", "subject.keycloak-sub-uuid", "role.editor"]
+}
 ```
 
-Close without event:
-```bash
-curl -X POST http://localhost:3000/internal/send \
-  -H "Content-Type: application/json" \
-  -d '{
-    "token": "550e8400-e29b-41d4-a716-446655440000",
-    "close": true
-  }'
-```
-
-### Health Endpoints
-
-**`GET /healthz`** - Liveness probe
-- Returns `200` unless fatal error
-
-**`GET /readyz`** - Readiness probe
-- Returns `200` when `CALLBACK_URL` configured and server ready
-- Returns `503` otherwise
-
-### Disconnect Callback
-
-When a connection closes, SSEGateway calls your Python backend:
+**Disconnect:**
 
 ```json
 {
   "action": "disconnect",
-  "reason": "client_closed",
-  "token": "550e8400-e29b-41d4-a716-446655440000",
-  "request": {
-    "url": "/channel/updates?user=123",
-    "headers": { ... }
-  }
+  "token": "<uuid>",
+  "reason": "client_closed | server_closed | error",
+  "request": { "url": "<raw-url>", "headers": { ... } }
 }
 ```
 
-**Disconnect Reasons:**
-- `"client_closed"`: Client disconnected
-- `"server_closed"`: Python sent `close: true`
-- `"error"`: Write failure or other error
+Callbacks are best-effort — no retries, errors are logged only.
+
+## AMQP transport
+
+- **Exchange:** `sse.events` (topic, durable). Prefixed with `RABBITMQ_ENV_PREFIX` if set (e.g. `myapp.sse.events`).
+- **Queues:** One per connection, non-durable, auto-delete disabled, TTL controlled by `RABBITMQ_QUEUE_TTL_MS`.
+- **Routing keys:** Set by the backend via the `bindings` array in the connect callback response. Common patterns:
+  - `connection.<request_id>` — single connection
+  - `subject.<oidc_subject>` — all connections for a user
+  - `role.<role>` — all connections with a role
+  - `broadcast` — all connections
+- **Message format** (JSON):
+  ```json
+  { "event_name": "<event_type>", "data": "{...}" }
+  ```
+  The gateway wraps these in the unnamed envelope format described above.
+- **Reconnect:** Exponential backoff capped at 30 seconds. After reconnect, queues are re-asserted, bindings re-established, and consumers re-created. A `ready` event is re-sent to each connection.
+
+## Heartbeats
+
+SSE comment heartbeats (`: heartbeat\n`) are sent at a configurable interval to keep connections alive through proxies and load balancers. Not visible to the backend.
+
+## Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3000` | Server listen port |
+| `CALLBACK_URL` | — | Backend callback endpoint (required for readiness) |
+| `HEARTBEAT_INTERVAL_SECONDS` | `15` | Heartbeat interval per connection |
+| `RABBITMQ_URL` | — | AMQP URL; omit to disable RabbitMQ transport |
+| `RABBITMQ_QUEUE_TTL_MS` | `300000` | TTL for per-connection queues (ms) |
+| `RABBITMQ_ENV_PREFIX` | — | Prefix for exchange name (environment isolation) |
+
+## Technology
+
+- Node.js 20 / TypeScript 5 / Express 5 / ESM
+- amqplib for AMQP
+- Single-threaded event loop — event ordering per connection is guaranteed
+- No authentication, no persistence, single-instance sidecar
 
 ## Development
 
-### Run in Development Mode
-
 ```bash
-npm run dev
-```
-
-### Run Tests
-
-```bash
-# Run all tests
+npm install
+npm run build
 npm test
-
-# Run with coverage
-npm run test:coverage
-
-# Watch mode
-npm run test:watch
+npm run lint
 ```
 
-### Project Structure
-
-```
-ssegateway/
-├── src/
-│   ├── index.ts              # Entry point
-│   ├── server.ts             # Express app and routes
-│   ├── connections.ts        # Connection state management
-│   ├── sse.ts               # SSE formatting utilities
-│   ├── callback.ts          # Python callback logic
-│   ├── config.ts            # Environment configuration
-│   ├── logger.ts            # Logging utilities
-│   └── routes/
-│       ├── sse.ts           # SSE connection handler
-│       ├── internal.ts      # /internal/send handler
-│       └── health.ts        # Health check handlers
-├── __tests__/               # Test files
-├── docs/                    # Documentation
-├── package.json
-├── tsconfig.json
-└── Dockerfile
-```
-
-## Docker Deployment
-
-### Build Image
-
-```bash
-docker build -t ssegateway:latest .
-```
-
-### Run Container
-
-```bash
-docker run -d \
-  -p 3000:3000 \
-  -e CALLBACK_URL=http://python-backend:8000/sse/callback \
-  -e HEARTBEAT_INTERVAL_SECONDS=15 \
-  --name ssegateway \
-  ssegateway:latest
-```
-
-### Docker Compose Example
-
-```yaml
-version: '3.8'
-
-services:
-  ssegateway:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - CALLBACK_URL=http://python-backend:8000/sse/callback
-      - HEARTBEAT_INTERVAL_SECONDS=15
-    depends_on:
-      - python-backend
-    restart: unless-stopped
-
-  python-backend:
-    # Your Python service configuration
-    ...
-```
-
-## SSE Event Format
-
-Events follow the SSE specification strictly:
-
-```
-event: message
-data: First line
-data: Second line
-
-: heartbeat
-
-event: update
-data: {"status": "ok"}
-
-```
-
-- Event name line (if present): `event: <name>\n`
-- Data lines: `data: <line>\n` (one per line of data)
-- Blank line to terminate event
-- Comments for heartbeats: `: heartbeat\n`
-
-## Contributing
-
-We welcome contributions! Please follow these guidelines:
-
-1. **Fork the repository** and create your branch from `main`
-2. **Make your changes** with clear, descriptive commits
-3. **Add tests** for any new functionality
-4. **Ensure tests pass**: `npm test`
-5. **Follow code style**: TypeScript with ESM modules
-6. **Update documentation** if needed
-7. **Submit a pull request** with a clear description of changes
-
-### Code Style
-
-- TypeScript strict mode
-- ESM modules (`import`/`export`)
-- Descriptive variable names
-- Comprehensive error handling
-- Inline comments for complex logic
-
-### Reporting Issues
-
-Please open an issue on GitHub with:
-- Clear description of the problem
-- Steps to reproduce
-- Expected vs actual behavior
-- Environment details (Node version, OS, etc.)
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-For questions, issues, or feature requests, please open an issue on GitHub.
-
-## Acknowledgments
-
-Built with:
-- [Node.js](https://nodejs.org/) - JavaScript runtime
-- [Express](https://expressjs.com/) - Web framework
-- [TypeScript](https://www.typescriptlang.org/) - Type safety
-- [Jest](https://jestjs.io/) - Testing framework
+The gateway is also published as an npm package for use in Playwright test harnesses. See `docs/usage.md`.
