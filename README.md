@@ -21,11 +21,13 @@ Domain events from AMQP are wrapped in an **unnamed envelope** so the browser re
 data: {"type":"<event_name>","payload":<data>}\n\n
 ```
 
-The `ready` event is the exception — it is a **named SSE event with no data line**, keeping it out of the domain message flow:
+The `ready` event is the exception — it is a **named SSE event with an empty data line**, keeping it out of the domain message flow:
 
 ```
-event: ready\n\n
+event: ready\ndata:\n\n
 ```
+
+(The empty `data:` line is required because browsers' `EventSource` discards events with no data field per the WHATWG HTML spec.)
 
 The `ready` event is sent after AMQP queue bindings are confirmed (or immediately in HTTP-only mode). Clients must wait for it before treating the connection as established. It is re-sent after AMQP reconnection and rebinding.
 

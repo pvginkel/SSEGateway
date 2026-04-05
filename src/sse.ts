@@ -10,17 +10,21 @@
  * registering per-event-type listeners, eliminating subscription race conditions.
  *
  * The `ready` event is a control signal (connection is live and AMQP bindings
- * are established). It is emitted as a data-less named SSE event so clients
- * can listen for it via `addEventListener('ready', ...)` without it appearing
- * in the normal `onmessage` domain-event stream.
+ * are established). It is emitted as a named SSE event with an empty data
+ * line so clients can listen for it via `addEventListener('ready', ...)`
+ * without it appearing in the normal `onmessage` domain-event stream. The
+ * empty `data:` line is required because browsers' EventSource silently
+ * discards events with no data per the WHATWG HTML spec.
  */
 
 /**
  * Format an SSE event for the wire.
  *
  * Behaviour:
- * - **`ready` control signal**: data-less named event — `event: ready\n\n`.
- *   Any `data` argument is ignored.
+ * - **`ready` control signal**: named event with empty data line —
+ *   `event: ready\ndata:\n\n`. Any `data` argument is ignored. The empty
+ *   `data:` line is required because browsers' EventSource discards events
+ *   with no data field per the WHATWG HTML spec.
  * - **Unnamed events** (no name or empty name): classic SSE format with
  *   raw `data:` lines only.
  * - **All other named events**: wrapped in an unnamed envelope so the browser
@@ -37,9 +41,9 @@
  * formatSseEvent('version', '{"version":"abc123"}')
  * // Returns: 'data: {"type":"version","payload":{"version":"abc123"}}\n\n'
  *
- * // ready -> data-less named event
+ * // ready -> named event with empty data line
  * formatSseEvent('ready')
- * // Returns: 'event: ready\n\n'
+ * // Returns: 'event: ready\ndata:\n\n'
  *
  * // No name -> raw data
  * formatSseEvent(undefined, 'Hello')
@@ -47,9 +51,11 @@
  * ```
  */
 export function formatSseEvent(name: string | undefined, data?: string): string {
-  // ready is a data-less control-signal named event
+  // ready is a control-signal named event. Emit with an empty `data:` line
+  // because browsers' EventSource discards events that have no data field
+  // (per the WHATWG HTML spec for server-sent events).
   if (name === 'ready') {
-    return 'event: ready\n\n';
+    return 'event: ready\ndata:\n\n';
   }
 
   const hasName = name !== undefined && name.length > 0;

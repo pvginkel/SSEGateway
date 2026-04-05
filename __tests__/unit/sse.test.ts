@@ -24,11 +24,13 @@ describe('SSE Event Formatting', () => {
       expect(result).toBe(`data: {"type":"task_event","payload":${data}}\n\n`);
     });
 
-    // --- ready: data-less named control-signal event ---
+    // --- ready: named control-signal event with empty data line ---
 
-    it('should emit ready as a data-less named event', () => {
+    it('should emit ready as a named event with empty data line', () => {
+      // Browsers' EventSource discards events with no data field per WHATWG
+      // HTML spec, so ready must include an empty `data:` line to dispatch.
       const result = formatSseEvent('ready');
-      expect(result).toBe('event: ready\n\n');
+      expect(result).toBe('event: ready\ndata:\n\n');
     });
 
     // --- Unnamed events (no name) ---

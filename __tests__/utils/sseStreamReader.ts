@@ -173,9 +173,7 @@ export class SseStreamReader {
    * @returns Array of application event items
    */
   getApplicationEvents(): SseStreamItem[] {
-    return this.getEvents().filter(
-      (item) => !item.data?.includes('"type":"ready"')
-    );
+    return this.getEvents().filter((item) => item.event !== 'ready');
   }
 
   /**
