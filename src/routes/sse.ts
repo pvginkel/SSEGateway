@@ -253,7 +253,7 @@ export function createSseRouter(config: Config): express.Router {
     // Without AMQP (HTTP-only mode) or AMQP setup failed: sent immediately.
     // Clients must wait for this event before treating the connection as established.
     try {
-      const readyEvent = formatSseEvent('ready', '{}');
+      const readyEvent = formatSseEvent('ready');
       res.write(readyEvent);
     } catch {
       // Write failed — client already disconnected

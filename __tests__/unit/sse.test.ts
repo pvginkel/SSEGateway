@@ -24,16 +24,11 @@ describe('SSE Event Formatting', () => {
       expect(result).toBe(`data: {"type":"task_event","payload":${data}}\n\n`);
     });
 
-    // --- Passthrough: connection_close stays as named event ---
+    // --- ready: data-less named control-signal event ---
 
-    it('should keep connection_close as a named event', () => {
-      const result = formatSseEvent('connection_close', '{"reason":"done"}');
-      expect(result).toBe('event: connection_close\ndata: {"reason":"done"}\n\n');
-    });
-
-    it('should handle multiline data in connection_close', () => {
-      const result = formatSseEvent('connection_close', 'Line 1\nLine 2');
-      expect(result).toBe('event: connection_close\ndata: Line 1\ndata: Line 2\n\n');
+    it('should emit ready as a data-less named event', () => {
+      const result = formatSseEvent('ready');
+      expect(result).toBe('event: ready\n\n');
     });
 
     // --- Unnamed events (no name) ---
@@ -78,7 +73,7 @@ describe('SSE Event Formatting', () => {
     it('should always end with blank line', () => {
       const result1 = formatSseEvent('test', '"data"');
       const result2 = formatSseEvent(undefined, 'data');
-      const result3 = formatSseEvent('connection_close', '');
+      const result3 = formatSseEvent('ready');
 
       expect(result1.endsWith('\n\n')).toBe(true);
       expect(result2.endsWith('\n\n')).toBe(true);
