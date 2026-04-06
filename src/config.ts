@@ -17,6 +17,8 @@ export interface Config {
   rabbitmqQueueTtlMs: number;
   /** Prefix for the SSE events exchange name (environment isolation) */
   rabbitmqEnvPrefix: string;
+  /** Declare exchange as auto-delete so it self-cleans after consumers disconnect */
+  rabbitmqEnvAutoDelete: boolean;
 }
 
 /**
@@ -81,6 +83,10 @@ export function loadConfig(): Config {
   // Parse RABBITMQ_ENV_PREFIX (optional — empty string means no prefix)
   const rabbitmqEnvPrefix = process.env.RABBITMQ_ENV_PREFIX || '';
 
+  // When true, declare the exchange as auto-delete so it self-cleans
+  // after all consumers disconnect (used in test environments).
+  const rabbitmqEnvAutoDelete = process.env.RABBITMQ_ENV_AUTO_DELETE === 'true';
+
   return {
     port,
     callbackUrl,
@@ -88,5 +94,6 @@ export function loadConfig(): Config {
     rabbitmqUrl,
     rabbitmqQueueTtlMs,
     rabbitmqEnvPrefix,
+    rabbitmqEnvAutoDelete,
   };
 }

@@ -424,7 +424,10 @@ async function doConnect(config: Config): Promise<void> {
     await ch.prefetch(10);
 
     // Assert the topic exchange (idempotent — safe on reconnect)
-    await ch.assertExchange(sseEventsExchange, 'topic', { durable: true });
+    await ch.assertExchange(sseEventsExchange, 'topic', {
+      durable: !config.rabbitmqEnvAutoDelete,
+      autoDelete: config.rabbitmqEnvAutoDelete,
+    });
 
     // Mark as connected
     connected = true;
