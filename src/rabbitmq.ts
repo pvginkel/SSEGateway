@@ -177,7 +177,7 @@ export async function setupConnectionQueue(
 
   // Assert queue with TTL — idempotent, safe on reconnect
   await ch.assertQueue(queueName, {
-    durable: false,
+    durable: true,
     exclusive: false,
     autoDelete: false,
     arguments: { 'x-expires': config.rabbitmqQueueTtlMs },
@@ -530,7 +530,7 @@ async function reestablishConsumers(config: Config): Promise<void> {
 
       // assertQueue is idempotent — safe to call again with same params
       await ch.assertQueue(record.amqpQueueName, {
-        durable: false,
+        durable: true,
         exclusive: false,
         autoDelete: false,
         arguments: { 'x-expires': config.rabbitmqQueueTtlMs },

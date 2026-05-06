@@ -57,7 +57,7 @@ podTemplate(inheritFrom: 'jenkins-agent kaniko', containers: [
                                                   cpu: "500m"
                                                   memory: 256Mi
                                         - name: rabbitmq
-                                          image: rabbitmq:3
+                                          image: rabbitmq:4.3-management
                                     volumes: []
                     """.stripIndent())
 

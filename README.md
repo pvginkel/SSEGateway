@@ -104,7 +104,7 @@ Callbacks are best-effort — no retries, errors are logged only.
 ## AMQP transport
 
 - **Exchange:** `sse.events` (topic, durable). Prefixed with `RABBITMQ_ENV_PREFIX` if set (e.g. `myapp.sse.events`).
-- **Queues:** One per connection, non-durable, auto-delete disabled, TTL controlled by `RABBITMQ_QUEUE_TTL_MS`.
+- **Queues:** One per connection, durable, auto-delete disabled, TTL controlled by `RABBITMQ_QUEUE_TTL_MS`.
 - **Routing keys:** Set by the backend via the `bindings` array in the connect callback response. Common patterns:
   - `connection.<request_id>` — single connection
   - `subject.<oidc_subject>` — all connections for a user

@@ -214,7 +214,7 @@ Add RabbitMQ as an additive, optional second event-delivery transport. When `RAB
 - Evidence: Gateway brief section 4; change brief requirement 3.
 
 - Entity / contract: AMQP queue declaration arguments
-- Shape: `{ durable: false, exclusive: false, autoDelete: false, arguments: { 'x-expires': rabbitmqQueueTtlMs } }`
+- Shape: `{ durable: true, exclusive: false, autoDelete: false, arguments: { 'x-expires': rabbitmqQueueTtlMs } }`
 - Refactor strategy: No back-compat concern; queue name `sse.conn.<request_id>` is deterministic and idempotent via `assertQueue`.
 - Evidence: Gateway brief section 3, bullet 2.
 
@@ -276,7 +276,7 @@ Add RabbitMQ as an additive, optional second event-delivery transport. When `RAB
 - Steps:
   1. After `connectionRecord.eventBuffer = []` at `src/routes/sse.ts:203`, check: `callbackResult.bindings` is non-empty AND `getChannel()` returns non-null.
   2. Derive queue name: `sse.conn.${callbackResult.requestId}`.
-  3. Call `channel.assertQueue(queueName, { durable: false, exclusive: false, autoDelete: false, arguments: { 'x-expires': config.rabbitmqQueueTtlMs } })`. On failure: log `[WARN]`, skip AMQP for this connection (connection continues HTTP-only).
+  3. Call `channel.assertQueue(queueName, { durable: true, exclusive: false, autoDelete: false, arguments: { 'x-expires': config.rabbitmqQueueTtlMs } })`. On failure: log `[WARN]`, skip AMQP for this connection (connection continues HTTP-only).
   4. For each key in `callbackResult.bindings`: call `channel.bindQueue(queueName, 'sse.events', key)`.
   5. Call `channel.consume(queueName, messageHandler)` and store the returned consumer tag.
   5a. **Orphaned-consumer guard:** After `channel.consume` resolves, check `getConnection(token)`. If the connection is no longer in the Map (client disconnected while `assertQueue`/`bindQueue`/`consume` were in-flight), immediately call `channel.cancel(consumerTag)` (wrapped in try/catch) and return without setting any fields on the record. Without this check, the consumer persists in RabbitMQ, every delivered message nacks-with-requeue, and the cycle continues until queue TTL fires (up to 5 minutes, up to 10 messages in flight under prefetch).
