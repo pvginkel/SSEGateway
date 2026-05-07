@@ -500,8 +500,19 @@ describe('Concurrent Connections', () => {
         requests.push({ req, promise });
       }
 
-      // Wait for all connections to be established
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Wait for all connections to be fully established (heartbeat timer set
+      // after callback completes). Poll instead of using a fixed sleep so the
+      // test isn't flaky on slow CI runners.
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        if (
+          connections.size === 50 &&
+          Array.from(connections.values()).every((c) => c.heartbeatTimer !== null)
+        ) {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
 
       // Verify all connections exist
       expect(connections.size).toBe(50);
