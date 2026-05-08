@@ -54,6 +54,8 @@ export interface CallbackResult {
   success: boolean;
   /** HTTP status code (if response received) */
   statusCode?: number;
+  /** HTTP status line reason phrase (if response received). May be empty under HTTP/2. */
+  statusText?: string;
   /** Error type classification (if request failed) */
   errorType?: 'timeout' | 'network' | 'http_error';
   /** Error message (if request failed or non-2xx) */
@@ -176,6 +178,7 @@ async function sendCallback(
       return {
         success: false,
         statusCode: response.status,
+        statusText: response.statusText,
         errorType: 'http_error',
         error: `HTTP ${response.status}`,
       };

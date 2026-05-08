@@ -152,6 +152,97 @@ export function isConnected(): boolean {
 }
 
 /**
+ * Wrap a base message handler so a broker-side consumer cancel (delivered as
+ * `msg === null` by amqplib) can be tied back to a specific gateway token,
+ * allowing fail-loud cleanup of the affected SSE connection.
+ *
+ * Also performs the existing first-delivery consumer-tag self-registration
+ * (covering the race where amqplib delivers a message synchronously before
+ * the await on `ch.consume` resolves).
+ */
+function wrapHandlerForToken(
+  token: string,
+  callbackUrl: string,
+  baseHandler: (msg: ConsumeMessage | null) => Promise<void>
+): (msg: ConsumeMessage | null) => Promise<void> {
+  return async (msg: ConsumeMessage | null) => {
+    if (msg === null) {
+      // Broker cancelled the consumer — close the SSE stream so the client
+      // reconnects from scratch rather than sit on a stream with no consumer.
+      await closeSseConnectionForAmqpFailure(
+        token,
+        callbackUrl,
+        'consumer cancelled by broker'
+      );
+      return;
+    }
+    if (!consumerTagToToken.has(msg.fields.consumerTag)) {
+      consumerTagToToken.set(msg.fields.consumerTag, token);
+    }
+    await baseHandler(msg);
+  };
+}
+
+/**
+ * Close an SSE connection that has become unable to receive AMQP-delivered
+ * events (initial setup failed, reestablish failed, broker cancelled the
+ * consumer). Cleans up gateway state, ends the response so EventSource fires
+ * onerror and reconnects, and notifies the backend (reason 'error') so it
+ * releases per-token state.
+ *
+ * Idempotent: if the token is no longer in the connections map, returns silently.
+ *
+ * Exported so the SSE route handler can call it directly when initial AMQP
+ * queue setup fails (during connect, before the connection is fully ready).
+ *
+ * @param token - Gateway connection token
+ * @param callbackUrl - Python backend callback URL
+ * @param reason - Short description of why the SSE connection is being closed (for logs)
+ */
+export async function closeSseConnectionForAmqpFailure(
+  token: string,
+  callbackUrl: string,
+  reason: string
+): Promise<void> {
+  const record = getConnection(token);
+  if (!record) {
+    return;
+  }
+
+  logger.error(
+    `Closing SSE stream after AMQP failure: token=${token} reason=${reason}`
+  );
+
+  // Drop any stale consumer tag from the reverse map (best-effort).
+  if (record.amqpConsumerTag) {
+    consumerTagToToken.delete(record.amqpConsumerTag);
+    record.amqpConsumerTag = undefined;
+  }
+
+  // Clear heartbeat timer.
+  if (record.heartbeatTimer) {
+    clearInterval(record.heartbeatTimer);
+    record.heartbeatTimer = null;
+  }
+
+  // Mark and remove from map BEFORE res.end() so the route's close handler
+  // sees no map entry and skips its own cleanup/disconnect callback.
+  record.disconnected = true;
+  removeConnection(token);
+
+  // Notify backend so per-token state is released. Awaited before res.end()
+  // so the backend learns of the failure before the client starts
+  // reconnecting; sendDisconnectCallback already swallows its own errors.
+  await sendDisconnectCallback(callbackUrl, token, 'error', record.request);
+
+  try {
+    record.res.end();
+  } catch {
+    // Best-effort — response may already be closed.
+  }
+}
+
+/**
  * Assert a queue, bind it to the exchange with the given routing keys,
  * and start consuming. Returns the consumer tag or null if the connection
  * was lost during setup or the connection disconnected before consume resolved.
@@ -188,16 +279,23 @@ export async function setupConnectionQueue(
     await ch.bindQueue(queueName, sseEventsExchange, key);
   }
 
-  // Wrap the message handler to auto-register the consumer tag on first delivery.
-  // This is necessary because amqplib may deliver messages synchronously in the
-  // same event loop tick as the ConsumeOk response, BEFORE our await continuation
-  // runs and registers the tag in the reverse map.
-  const wrappedHandler = (msg: ConsumeMessage | null) => {
-    if (msg && !consumerTagToToken.has(msg.fields.consumerTag)) {
-      consumerTagToToken.set(msg.fields.consumerTag, token);
-    }
+  if (!config.callbackUrl) {
+    // Defensive: setupConnectionQueue is only called from the SSE route, which
+    // verifies callbackUrl earlier. If we ever get here without one, the
+    // broker-cancel path can't notify the backend, so refuse to start consuming.
+    return null;
+  }
+
+  // Wrap the base handler so:
+  // (1) the consumer tag is auto-registered on first delivery (covers the race
+  //     where amqplib delivers messages synchronously in the same event loop
+  //     tick as the ConsumeOk response, before our await resolves);
+  // (2) a broker-side consumer cancel (msg === null) closes the SSE stream
+  //     for this token instead of being silently dropped.
+  const baseHandler = async (msg: ConsumeMessage | null) => {
     onMessage(msg);
   };
+  const wrappedHandler = wrapHandlerForToken(token, config.callbackUrl, baseHandler);
 
   // Start consuming messages
   const consumeResult = await ch.consume(queueName, wrappedHandler);
@@ -509,11 +607,17 @@ async function reestablishConsumers(config: Config): Promise<void> {
     return;
   }
 
-  const messageHandler = createMessageHandler(config.callbackUrl);
+  const callbackUrl = config.callbackUrl;
+  const baseHandler = createMessageHandler(callbackUrl);
   let reestablished = 0;
 
-  for (const [token, record] of connections) {
-    if (!record.amqpQueueName) {
+  // Snapshot tokens up front. closeSseConnectionForAmqpFailure mutates
+  // `connections`, which would invalidate iteration of the live map.
+  const tokens = Array.from(connections.keys());
+
+  for (const token of tokens) {
+    const record = connections.get(token);
+    if (!record || !record.amqpQueueName) {
       continue;
     }
 
@@ -544,7 +648,11 @@ async function reestablishConsumers(config: Config): Promise<void> {
         }
       }
 
-      const consumeResult = await ch.consume(record.amqpQueueName, messageHandler);
+      // Per-token wrapper so a broker-side consumer cancel (msg === null)
+      // can identify this connection and close its SSE stream.
+      const tokenHandler = wrapHandlerForToken(token, callbackUrl, baseHandler);
+
+      const consumeResult = await ch.consume(record.amqpQueueName, tokenHandler);
       const newTag = consumeResult.consumerTag;
 
       // Update record and reverse map with new consumer tag
@@ -564,8 +672,15 @@ async function reestablishConsumers(config: Config): Promise<void> {
       );
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      logger.warn(
+      logger.error(
         `AMQP consumer re-establish failed: token=${token} queue=${record.amqpQueueName} error=${errMsg}`
+      );
+      // Fail loud: close the SSE stream so the client reconnects rather than
+      // sit on an open stream with no working consumer.
+      await closeSseConnectionForAmqpFailure(
+        token,
+        callbackUrl,
+        `reestablish failed: ${errMsg}`
       );
     }
   }

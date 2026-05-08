@@ -26,8 +26,6 @@ import { formatSseEvent } from '../sse.js';
 import {
   respondWithError,
   SERVICE_NOT_CONFIGURED,
-  BACKEND_AUTH_FAILED,
-  BACKEND_FORBIDDEN,
   BACKEND_ERROR,
   BACKEND_UNAVAILABLE,
   GATEWAY_TIMEOUT,
@@ -39,7 +37,37 @@ import {
   setupConnectionQueue,
   cancelConsumer,
   createMessageHandler,
+  closeSseConnectionForAmqpFailure,
 } from '../rabbitmq.js';
+
+/**
+ * Open the SSE response stream: sets the standard SSE response headers,
+ * sends 200, and flushes headers so the stream is live for writes.
+ */
+function openSseResponseStream(res: Response): void {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Prevent NGINX buffering
+  res.status(200);
+  res.flushHeaders();
+}
+
+/**
+ * Standard HTTP reason phrases for the in-stream rejection statuses.
+ * Used as a fallback when the callback's HTTP/1.1 status line carries no
+ * reason phrase (e.g. HTTP/2, where the reason phrase is deprecated).
+ */
+function standardReasonPhrase(status: 400 | 401 | 403): string {
+  switch (status) {
+    case 400:
+      return 'Bad Request';
+    case 401:
+      return 'Unauthorized';
+    case 403:
+      return 'Forbidden';
+  }
+}
 
 /**
  * Create SSE router with wildcard route handler
@@ -130,31 +158,61 @@ export function createSseRouter(config: Config): express.Router {
 
     // Handle callback result
     if (!callbackResult.success) {
-      // Callback failed - determine appropriate HTTP status code and error code
+      // Graceful in-stream rejection for 400/401/403: open the SSE stream with
+      // a 200, emit a `rejected` control event carrying the status and reason
+      // phrase, then close cleanly. Clients that handle the event surface a
+      // toast; clients that don't see "stream opened, then closed" and fall
+      // through to their normal reconnect path.
+      if (
+        callbackResult.errorType === 'http_error' &&
+        (callbackResult.statusCode === 400 ||
+          callbackResult.statusCode === 401 ||
+          callbackResult.statusCode === 403)
+      ) {
+        const status = callbackResult.statusCode;
+        const message =
+          callbackResult.statusText && callbackResult.statusText.length > 0
+            ? callbackResult.statusText
+            : standardReasonPhrase(status);
+
+        logger.info(
+          `SSE connection rejected (in-stream): token=${token} status=${status} message=${message}`
+        );
+
+        // Mark disconnected and remove from map BEFORE writing so the
+        // res.on('close') handler (fired by res.end below) sees no map entry
+        // and skips the disconnect callback — the rejection itself is the
+        // disconnect signal.
+        connectionRecord.disconnected = true;
+        removeConnection(token);
+
+        openSseResponseStream(res);
+
+        try {
+          const payload = JSON.stringify({ status, message });
+          res.write(formatSseEvent('rejected', payload));
+        } catch {
+          // Write failed — client already disconnected; fall through to end()
+        }
+        res.end();
+        return;
+      }
+
+      // Other non-2xx outcomes (timeout, network error, 5xx, other 4xx) keep
+      // the existing HTTP-error response path.
       let statusCode: number;
       let errorMessage: string;
       let errorCode: string;
 
       if (callbackResult.errorType === 'timeout') {
-        // Callback timeout (>5s)
         statusCode = 504;
         errorMessage = 'Gateway timeout';
         errorCode = GATEWAY_TIMEOUT;
       } else if (callbackResult.errorType === 'http_error') {
-        // Non-2xx response from Python - return same status with semantic error code
         statusCode = callbackResult.statusCode!;
         errorMessage = `Backend returned ${statusCode}`;
-
-        // Use specific error codes for different HTTP status codes
-        if (statusCode === 401) {
-          errorCode = BACKEND_AUTH_FAILED;
-        } else if (statusCode === 403) {
-          errorCode = BACKEND_FORBIDDEN;
-        } else {
-          errorCode = BACKEND_ERROR;
-        }
+        errorCode = BACKEND_ERROR;
       } else {
-        // Network error (ECONNREFUSED, DNS failure, etc.)
         statusCode = 503;
         errorMessage = 'Backend unavailable';
         errorCode = BACKEND_UNAVAILABLE;
@@ -164,13 +222,9 @@ export function createSseRouter(config: Config): express.Router {
         `SSE connection rejected: token=${token} status=${statusCode} error=${callbackResult.error}`
       );
 
-      // Mark as disconnected to prevent adding to Map if 'close' fires later
       connectionRecord.disconnected = true;
-
-      // Remove connection from Map since callback failed
       removeConnection(token);
 
-      // Return error to client WITHOUT setting SSE headers
       respondWithError(res, statusCode, errorMessage, errorCode);
       return;
     }
@@ -184,15 +238,7 @@ export function createSseRouter(config: Config): express.Router {
       return;
     }
 
-    // Set SSE response headers
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // Prevent NGINX buffering
-
-    // Send 200 status and flush headers (opens SSE stream)
-    res.status(200);
-    res.flushHeaders();
+    openSseResponseStream(res);
 
     // Mark connection as ready for writes
     connectionRecord.ready = true;
@@ -218,33 +264,61 @@ export function createSseRouter(config: Config): express.Router {
     }
     connectionRecord.eventBuffer = []; // Clear buffer after flushing
 
-    // Set up AMQP consumer if the connect callback returned bindings
-    // This happens AFTER the buffer is fully flushed so event ordering is preserved.
+    // Set up AMQP consumer if the connect callback returned bindings AND the
+    // gateway is configured for AMQP (rabbitmqUrl set). This happens AFTER the
+    // buffer is fully flushed so event ordering is preserved.
+    //
+    // When AMQP is configured and bindings are present, the connection
+    // requires AMQP delivery: a setup failure cannot fall through to
+    // "HTTP-only mode" because that leaves the client believing the stream is
+    // healthy while no events will ever arrive. Instead, close the SSE stream
+    // cleanly and notify the backend so it cleans up per-token state. The
+    // client's existing EventSource.onerror reconnect path then handles
+    // recovery.
+    //
+    // When rabbitmqUrl is null the gateway operates in HTTP-only mode: any
+    // bindings returned by the callback are ignored and events flow through
+    // /internal/send only.
     if (
       callbackResult.bindings?.length &&
       callbackResult.requestId &&
-      getChannel() &&
-      config.callbackUrl
+      config.callbackUrl &&
+      config.rabbitmqUrl
     ) {
       const queueName = `sse.conn.${callbackResult.requestId}`;
+      let amqpFailureReason: string | undefined;
+
       try {
-        const messageHandler = createMessageHandler(config.callbackUrl);
-        const consumerTag = await setupConnectionQueue(
-          token,
-          queueName,
-          callbackResult.bindings,
-          config,
-          messageHandler
-        );
-        if (consumerTag) {
-          connectionRecord.amqpQueueName = queueName;
-          connectionRecord.amqpConsumerTag = consumerTag;
-          connectionRecord.amqpBindings = callbackResult.bindings;
+        if (!getChannel()) {
+          amqpFailureReason = 'channel unavailable';
+        } else {
+          const messageHandler = createMessageHandler(config.callbackUrl);
+          const consumerTag = await setupConnectionQueue(
+            token,
+            queueName,
+            callbackResult.bindings,
+            config,
+            messageHandler
+          );
+          if (consumerTag) {
+            connectionRecord.amqpQueueName = queueName;
+            connectionRecord.amqpConsumerTag = consumerTag;
+            connectionRecord.amqpBindings = callbackResult.bindings;
+          } else {
+            amqpFailureReason = 'consumer setup returned null';
+          }
         }
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        logger.warn(`AMQP queue setup failed: token=${token} error=${errMsg}`);
-        // Connection continues in HTTP-only mode — no throw
+        amqpFailureReason = err instanceof Error ? err.message : String(err);
+      }
+
+      if (amqpFailureReason) {
+        await closeSseConnectionForAmqpFailure(
+          token,
+          config.callbackUrl,
+          `queue setup failed: ${amqpFailureReason}`
+        );
+        return;
       }
     }
 

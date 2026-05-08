@@ -10,6 +10,7 @@ import { createApp } from '../../src/server.js';
 import type { Config } from '../../src/config.js';
 import { MockServer } from '../utils/mockServer.js';
 import { connections } from '../../src/connections.js';
+import { parseSseStream } from '../utils/sseParser.js';
 
 describe('SSE Connection Flow', () => {
   let mockServer: MockServer;
@@ -242,51 +243,58 @@ describe('SSE Connection Flow', () => {
     }, 10000);
   });
 
-  describe('Connect callback rejection (non-2xx)', () => {
-    it('should return 401 when Python callback returns 401', async () => {
-      mockServer.setStatusCode(401);
+  describe('Connect callback rejection (in-stream for 400/401/403)', () => {
+    // 400/401/403 from the connect callback yield a graceful in-stream rejection:
+    // HTTP 200 SSE response, a single `rejected` event carrying the status and
+    // reason phrase, then the stream closes. No disconnect callback to the
+    // backend (the rejection itself is the disconnect signal).
+    const inStreamCases = [
+      { status: 400, path: '/sse/bad-request' },
+      { status: 401, path: '/sse/protected' },
+      { status: 403, path: '/sse/forbidden' },
+    ] as const;
 
-      const response = await request(app).get('/sse/protected');
+    it.each(inStreamCases)(
+      'sends rejected event + closes stream when callback returns $status',
+      async ({ status, path }) => {
+        mockServer.setStatusCode(status);
 
-      expect(response.status).toBe(401);
-      expect(response.headers['content-type']).toMatch(/application\/json/);
-      expect(response.body).toEqual({
-        error: {
-          message: 'Backend returned 401',
-          code: 'BACKEND_AUTH_FAILED',
-        },
-      });
+        const response = await request(app).get(path);
 
-      // Verify connect callback was sent
-      const callbacks = mockServer.getCallbacks();
-      expect(callbacks).toHaveLength(1);
-      expect(callbacks[0].action).toBe('connect');
+        expect(response.status).toBe(200);
+        expect(response.headers['content-type']).toBe('text/event-stream');
+        expect(response.headers['cache-control']).toBe('no-cache');
 
-      // Verify connection is NOT in Map
-      expect(connections.size).toBe(0);
-    });
+        const events = parseSseStream(response.text);
+        expect(events.length).toBeGreaterThanOrEqual(1);
 
-    it('should return 403 when Python callback returns 403', async () => {
-      mockServer.setStatusCode(403);
+        const rejected = events[0];
+        expect(rejected.event).toBe('rejected');
+        const payload = JSON.parse(rejected.data) as { status: number; message: string };
+        expect(payload.status).toBe(status);
+        expect(typeof payload.message).toBe('string');
+        expect(payload.message.length).toBeGreaterThan(0);
 
-      const response = await request(app).get('/sse/forbidden');
+        // No follow-up events after the rejection.
+        expect(events.length).toBe(1);
 
-      expect(response.status).toBe(403);
-      expect(response.body).toEqual({
-        error: {
-          message: 'Backend returned 403',
-          code: 'BACKEND_FORBIDDEN',
-        },
-      });
-      expect(connections.size).toBe(0);
-    });
+        // Connect callback was sent; no disconnect callback follows.
+        const callbacks = mockServer.getCallbacks();
+        expect(callbacks).toHaveLength(1);
+        expect(callbacks[0].action).toBe('connect');
 
-    it('should return 500 when Python callback returns 500', async () => {
+        // Connection record is cleaned up.
+        expect(connections.size).toBe(0);
+      }
+    );
+
+    it('returns HTTP 500 (not in-stream rejection) when callback returns 500', async () => {
       mockServer.setStatusCode(500);
 
       const response = await request(app).get('/sse/error');
 
       expect(response.status).toBe(500);
+      expect(response.headers['content-type']).toMatch(/application\/json/);
       expect(response.body).toEqual({
         error: {
           message: 'Backend returned 500',
@@ -296,14 +304,20 @@ describe('SSE Connection Flow', () => {
       expect(connections.size).toBe(0);
     });
 
-    it('should NOT set SSE headers when callback rejects', async () => {
-      mockServer.setStatusCode(401);
+    it('returns HTTP 429 (not in-stream rejection) for 4xx outside 400/401/403', async () => {
+      mockServer.setStatusCode(429);
 
-      const response = await request(app).get('/sse/protected');
+      const response = await request(app).get('/sse/rate-limited');
 
-      expect(response.status).toBe(401);
+      expect(response.status).toBe(429);
       expect(response.headers['content-type']).toMatch(/application\/json/);
-      expect(response.headers['content-type']).not.toBe('text/event-stream');
+      expect(response.body).toEqual({
+        error: {
+          message: 'Backend returned 429',
+          code: 'BACKEND_ERROR',
+        },
+      });
+      expect(connections.size).toBe(0);
     });
   });
 
