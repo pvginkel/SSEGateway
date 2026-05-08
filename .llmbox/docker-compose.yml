@@ -3,7 +3,7 @@ services:
     image: registry:5000/llmbox:latest
     network_mode: host
     pid: host
-    working_dir: /work
+    working_dir: /work/SSEGateway
     tty: true
     user: "${UID}:${GID}"
     environment:
@@ -17,6 +17,4 @@ services:
       - ${HOME}/.gitconfig:/home/ubuntu/.gitconfig:ro
       - ${HOME}/.cache:/home/ubuntu/.cache:rw
       - ${HOME}/.happy:/home/ubuntu/.happy:rw
-      - .:/work:rw
-    # Required for Chromium
-    shm_size: 1G
+      - .:/work/SSEGateway:rw
