@@ -144,7 +144,7 @@ podTemplate(inheritFrom: 'jenkins-agent kaniko', containers: [
         }
 
         stage('Deploy Helm charts') {
-            build job: 'HelmCharts', wait: false
+            cicd.helmDeploy()
         }
     }
 }
