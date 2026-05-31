@@ -1,0 +1,76 @@
+schemaVersion: "0.1"
+producer: ssegateway
+
+# SSEGateway is a Node.js sidecar that terminates Server-Sent Event (SSE)
+# connections on behalf of an in-house backend. It is an IN-HOUSE PROVIDER that
+# other apps consume: backends bind it as their real-time event-delivery surface
+# and reference svc:ssegateway by UUID. The product identity lives here; the
+# deployer (HelmCharts) owns running instances, their Specialization edges, and
+# any per-env public ApplicationInterface host.
+
+applicationComponents:
+  - id: app:ssegateway,447e208d-43de-4f2a-942c-84fc9cdfac45
+    label: SSEGateway
+    summary: >-
+      Node.js sidecar that terminates SSE client connections, coordinates connect/
+      disconnect with a backend via callbacks, and forwards events to clients from
+      a RabbitMQ topic exchange (or HTTP POST /internal/send).
+    introduced: 2025-11-18
+    lifecycle: active
+    stereotype: SoftwareProduct
+    sourceRepository: git:pvginkel/SSEGateway
+    stats:
+      image: registry:5000/ssegateway
+
+applicationServices:
+  - id: svc:ssegateway,59a7d043-bb0c-4e44-a8b8-3e943338f807
+    label: SSEGateway event delivery
+    summary: >-
+      Real-time event delivery service: backends publish events and receive
+      connect/disconnect callbacks; browser clients consume the resulting SSE
+      stream. The dependency target backends reference by UUID.
+    introduced: 2025-11-18
+    lifecycle: active
+
+applicationInterfaces:
+  - id: if:ssegateway-publish,d052e430-a661-46f5-9da2-c8f99e27be24
+    label: SSEGateway backend integration
+    summary: >-
+      Consumer surface for in-house backend services: the connect/disconnect
+      callback contract plus the HTTP-only POST /internal/send publish endpoint.
+    introduced: 2025-11-18
+    lifecycle: active
+
+  - id: if:ssegateway-stream,ecadf67b-368d-4aed-b3db-4afc4d59e2d0
+    label: SSEGateway client stream
+    summary: >-
+      Consumer surface for browser SSE clients: GET on any path returns a
+      text/event-stream that delivers events for the connection.
+    introduced: 2025-11-18
+    lifecycle: active
+
+relations:
+  # The product realizes the event-delivery service it exposes.
+  - id: rel:ssegateway-realizes-svc
+    source: app:ssegateway,447e208d-43de-4f2a-942c-84fc9cdfac45
+    target: svc:ssegateway,59a7d043-bb0c-4e44-a8b8-3e943338f807
+    type: Realization
+
+  # One interface per distinct consumer class, both assigned to the one service.
+  - id: rel:ssegateway-publish-assigns-svc
+    source: if:ssegateway-publish,d052e430-a661-46f5-9da2-c8f99e27be24
+    target: svc:ssegateway,59a7d043-bb0c-4e44-a8b8-3e943338f807
+    type: Assignment
+
+  - id: rel:ssegateway-stream-assigns-svc
+    source: if:ssegateway-stream,ecadf67b-368d-4aed-b3db-4afc4d59e2d0
+    target: svc:ssegateway,59a7d043-bb0c-4e44-a8b8-3e943338f807
+    type: Assignment
+
+  # Outbound consumption: the gateway consumes a RabbitMQ topic exchange
+  # (sse.events) to receive events for delivery — substitutable pub/sub infra.
+  - id: rel:ssegateway-consumes-pub-sub
+    source: app:ssegateway,447e208d-43de-4f2a-942c-84fc9cdfac45
+    target: cap:pub-sub-broker
+    type: Association
+    boundBy: "env:RABBITMQ_URL"
