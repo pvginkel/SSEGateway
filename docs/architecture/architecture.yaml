@@ -68,9 +68,10 @@ relations:
     type: Assignment
 
   # Outbound consumption: the gateway consumes a RabbitMQ topic exchange
-  # (sse.events) to receive events for delivery — substitutable pub/sub infra.
+  # (sse.events) to receive events for delivery — an AMQP message queue
+  # (the provider realizes cap:message-queue), used in a fan-out pattern.
   - id: rel:ssegateway-consumes-pub-sub
     source: app:ssegateway,447e208d-43de-4f2a-942c-84fc9cdfac45
-    target: cap:pub-sub-broker
+    target: cap:message-queue
     type: Association
     boundBy: "env:RABBITMQ_URL"
