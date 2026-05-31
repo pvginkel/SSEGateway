@@ -9,9 +9,7 @@ podTemplate(inheritFrom: 'jenkins-agent kaniko', containers: [
         def k8sNamespace = kubectl.currentNamespace()
 
         stage('Cloning repo') {
-            git branch: 'main',
-                credentialsId: '5f6fbd66-b41c-405f-b107-85ba6fd97f10',
-                url: 'https://github.com/pvginkel/SSEGateway.git'
+            checkout scm
         }
 
         stage('Build validation image') {
