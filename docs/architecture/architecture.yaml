@@ -75,3 +75,4 @@ relations:
     target: cap:message-queue
     type: Association
     boundBy: "env:RABBITMQ_URL"
+    boundByDefaultValue: "amqp://guest:guest@localhost:5672/"
