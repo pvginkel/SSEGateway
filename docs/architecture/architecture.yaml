@@ -70,9 +70,15 @@ relations:
   # Outbound consumption: the gateway consumes a RabbitMQ topic exchange
   # (sse.events) to receive events for delivery — an AMQP message queue
   # (the provider realizes cap:message-queue), used in a fan-out pattern.
+  #
+  # No boundByDefaultValue: the backplane is optional. Only the deploying
+  # release that wires RABBITMQ_URL (today: design-assistant) draws this edge;
+  # the sidecar's RABBITMQ_URL surfaces the real broker host, so it resolves
+  # like any in-cluster consumer. Sidecar instances with no backplane never
+  # set the var and are correctly skipped — a localhost default would falsely
+  # fan this edge across every release running the gateway.
   - id: rel:ssegateway-consumes-pub-sub
     source: app:ssegateway,447e208d-43de-4f2a-942c-84fc9cdfac45
     target: cap:message-queue
     type: Association
     boundBy: "env:RABBITMQ_URL"
-    boundByDefaultValue: "amqp://guest:guest@localhost:5672/"
