@@ -225,7 +225,7 @@ See `docs/usage.md` for full consumer documentation.
 
 ## Reference
 
-Complete specification: `/work/docs/product_brief.md`
+Complete specification: `docs/product_brief.md`
 
 ## Federated architecture model
 

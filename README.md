@@ -141,11 +141,19 @@ SSE comment heartbeats (`: heartbeat\n`) are sent at a configurable interval to 
 
 ## Development
 
+The repository is developed in a KubeCoder environment, where npm runs in the
+`frontend` tool container and the jest integration suite talks to the `rabbitmq`
+service sidecar on `localhost:5672`:
+
 ```bash
-npm install
-npm run build
-npm test
-npm run lint
+kc project setup    # npm ci (also compiles via the `prepare` script)
+kc project build    # npm run build
+kc project test     # jest
+kc project lint     # typecheck (src + __tests__) and architecture validation
 ```
+
+Outside such an environment, the underlying commands are `npm ci`,
+`npm run build` and `npm test`, with a RabbitMQ broker reachable at
+`amqp://guest:guest@localhost:5672/`.
 
 The gateway is also published as an npm package for use in Playwright test harnesses. See `docs/usage.md`.
