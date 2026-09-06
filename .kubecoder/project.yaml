@@ -27,8 +27,16 @@ projects:
     # (Jenkinsfile.architecture) is a second job, AaC/SSEGateway.
     jenkins: SSEGateway/SSEGateway
 
+    # INTERIM, and the pin is the whole point: the `frontend` toolchain ships
+    # npm 11, which does not install package-lock.json's *optional peer*
+    # dependencies — the jest 30 packages ts-jest 29 declares. 17 packages the
+    # lockfile places at the top level go missing, and the suite dies at load
+    # with `Cannot find module 'jest-util'` from ts-jest. npm 10 — what CI's
+    # node:20-alpine image uses — installs them, so the pin reproduces the tree
+    # CI and production actually run. Drop it once the repo runs on an npm the
+    # lockfile agrees with (see ONBOARDING-STATE.md).
     # `npm ci` also runs the package's `prepare` script, which compiles to dist/.
-    setup: cexec frontend npm ci
+    setup: cexec frontend npx -y npm@10 ci
 
     build: cexec frontend npm run build
 
