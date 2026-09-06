@@ -1,0 +1,45 @@
+# The repository's curated entry points.
+# Schema: https://kubecoder.home/help/reference/project-yaml/
+#
+# One build unit: a single package.json, tsconfig and jest config at the root,
+# so `root` owns the whole gate and there are no sub-components.
+#
+# npm runs in the `frontend` tool container — that is where node_modules is
+# installed. Never run npm from the dev container: it is a different Node.
+#
+# Image builds are deliberately NOT wired into `build:`. Jenkins builds both
+# images with helmCharts.kaniko(...), and an npm-install-per-stage image build
+# would turn the default `kc project build` sweep into minutes. To build one by
+# hand in this environment (from the repository root):
+#
+#   kaniko --destination registry:5000/ssegateway:local
+#   kaniko --dockerfile Dockerfile.validation --no-push
+#
+# `kaniko` is a dev-container client, not a cexec target, and it exists only in
+# this pod — never put it in a script Jenkins also runs.
+
+projects:
+  root:
+    description: >-
+      SSEGateway — Node/TypeScript sidecar that terminates SSE connections for a
+      Python backend (Express 5, ESM, AMQP transport via RabbitMQ).
+    # The main build/validate/deploy pipeline. The architecture-as-code producer
+    # (Jenkinsfile.architecture) is a second job, AaC/SSEGateway.
+    jenkins: SSEGateway/SSEGateway
+
+    # `npm ci` also runs the package's `prepare` script, which compiles to dist/.
+    setup: cexec frontend npm ci
+
+    build: cexec frontend npm run build
+
+    # jest, against the rabbitmq sidecar on localhost:5672.
+    test: cexec frontend npm test
+
+    # The repo configures no linter. These are the two checks that exist:
+    # a typecheck over src + __tests__ (the build only covers src), and the
+    # architecture artifact validation the AaC/SSEGateway job runs.
+    # arch-validate.py is stdlib-only and runs in the dev container; it needs
+    # outbound HTTPS to architecture.webathome.org.
+    lint:
+      - cexec frontend npx tsc --noEmit -p tsconfig.test.json
+      - ./scripts/arch-validate.py docs/architecture/*.yaml

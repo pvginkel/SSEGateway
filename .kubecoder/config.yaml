@@ -1,0 +1,33 @@
+# The environment's shape. Schema: https://kubecoder.home/help/reference/config-yaml/
+#
+# SSEGateway is a single-repo Node/TypeScript project: no sibling repos, no specs repo.
+
+cwd: SSEGateway
+
+capabilities:
+  github: rw
+
+tools:
+  # Node.js + npm for the TypeScript build and the jest suite.
+  - use: frontend
+
+services:
+  # The jest integration suite talks to a real broker at
+  # amqp://guest:guest@localhost:5672/ (hard-coded in
+  # __tests__/integration/rabbitmq.test.ts). This mirrors the rabbitmq sidecar
+  # the Jenkins validation Job runs alongside the suite container.
+  - rabbitmq
+
+# Dockerfile (the service image) and Dockerfile.validation (the CI suite image)
+# are built in-env with the kaniko client. See .kubecoder/project.yaml.
+imageBuilder: true
+
+setup:
+  - kc project setup
+
+preamble:
+  instructions: |
+    SSEGateway — a Node/TypeScript SSE sidecar. Build and test through
+    `kc project build` / `kc project test`; they run npm inside the `frontend`
+    tool container, where node_modules lives. The jest integration suite needs
+    the rabbitmq sidecar on localhost:5672 (guest/guest).
