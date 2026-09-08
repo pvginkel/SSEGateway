@@ -4,17 +4,23 @@ set -uo pipefail
 RESULTS_DIR=/app/results
 mkdir -p "$RESULTS_DIR"
 
+# Sum one numeric attribute over every <testsuite ...> element (never the root).
+sum_attr() {
+    grep -o '<testsuite [^>]*' "$2" | sed -nE "s/.* $1=\"([0-9]+)\".*/\1/p" | awk '{ s += $1 } END { print s + 0 }'
+}
+
 export_results() {
     echo "=== Exporting test results ==="
     for f in "$RESULTS_DIR"/*.xml; do
         [ -f "$f" ] || continue
 
         name=$(basename "$f" .xml)
-        tests=$(sed -nE 's/.*tests="([0-9]+)".*/\1/p' "$f" | head -1)
-        failures=$(sed -nE 's/.*failures="([0-9]+)".*/\1/p' "$f" | head -1)
-        errors=$(sed -nE 's/.*errors="([0-9]+)".*/\1/p' "$f" | head -1)
-        skipped=$(sed -nE 's/.*skipped="([0-9]+)".*/\1/p' "$f" | head -1)
-        tests=${tests:-0}; failures=${failures:-0}; errors=${errors:-0}; skipped=${skipped:-0}
+        # jest-junit's root <testsuites> element carries tests/failures/errors
+        # but no skipped, so every count is summed over the <testsuite> elements.
+        tests=$(sum_attr tests "$f")
+        failures=$(sum_attr failures "$f")
+        errors=$(sum_attr errors "$f")
+        skipped=$(sum_attr skipped "$f")
         failed=$((failures + errors))
         passed=$((tests - failed - skipped))
         echo "===SUITE_RESULT:${name}:${passed}:${failed}:${skipped}==="
