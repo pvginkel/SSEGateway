@@ -22,9 +22,6 @@ services:
 # are built in-env with the kaniko client. See .kubecoder/project.yaml.
 imageBuilder: true
 
-setup:
-  - kc project setup
-
 preamble:
   instructions: |
     SSEGateway — a Node/TypeScript SSE sidecar. Build and test through
