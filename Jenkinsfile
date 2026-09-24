@@ -141,11 +141,11 @@ podTemplate(inheritFrom: 'jenkins-agent kaniko', containers: [
             }
         }
 
-        // The consumers on Argo CD get the image as a pin in their deploy repos (argo-cd D53);
-        // HelmCharts still deploys the rest (dnsmasq, design-assistant).
+        // Every consumer gets the image as a pin in its deploy repo (argo-cd D53); the one left
+        // in HelmCharts, design-assistant, is disabled there (D60).
         stage('Write image pins') {
             container('k8s') {
-                def repos = ['pvginkel/Zigbee2mqttDeploy', 'pvginkel/ElectronicsInventoryDeploy', 'pvginkel/IotDeploy']
+                def repos = ['pvginkel/Zigbee2mqttDeploy', 'pvginkel/ElectronicsInventoryDeploy', 'pvginkel/IotDeploy', 'pvginkel/DnsmasqDeploy']
                 for (int i = 0; i < repos.size(); i++) {
                     cicd.writeVersionPins(repo: repos[i], pins: [
                         'config/prd/values.yaml': ['images.sseGateway': ":${currentBuild.number}"]
@@ -154,8 +154,5 @@ podTemplate(inheritFrom: 'jenkins-agent kaniko', containers: [
             }
         }
 
-        stage('Deploy Helm charts') {
-            cicd.helmDeploy()
-        }
     }
 }
