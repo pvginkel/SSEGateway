@@ -10,6 +10,8 @@ capabilities:
 tools:
   # Node.js + npm for the TypeScript build and the jest suite.
   - use: frontend
+  # arch-validate, the architecture artifact's lint gate.
+  - use: aac-tools
 
 services:
   # The jest integration suite talks to a real broker at

@@ -46,8 +46,8 @@ projects:
     # The repo configures no linter. These are the two checks that exist:
     # a typecheck over src + __tests__ (the build only covers src), and the
     # architecture artifact validation the AaC/SSEGateway job runs.
-    # arch-validate.py is stdlib-only and runs in the dev container; it needs
-    # outbound HTTPS to architecture.webathome.org.
+    # arch-validate runs in the aac-tools toolchain; it needs outbound HTTPS to
+    # architecture.webathome.org.
     lint:
       - cexec frontend npx tsc --noEmit -p tsconfig.test.json
-      - ./scripts/arch-validate.py docs/architecture/*.yaml
+      - cexec aac-tools arch-validate docs/architecture/*.yaml
