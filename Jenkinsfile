@@ -1,158 +1,205 @@
-import org.jenkinsci.plugins.pipeline.modeldefinition.Utils
+// Tests SSEGateway by running its validation image as a Kubernetes Job beside a RabbitMQ, then
+// builds the ssegateway image, pushes the tested commit to the stable branch, and pins the image
+// into Zigbee2mqttDeploy, ElectronicsInventoryDeploy, IotDeploy and DnsmasqDeploy, which Argo CD
+// syncs to prd.
+//
+// Controller config:
+//   - Job: SSEGateway/SSEGateway
+//   - SCM: pvginkel/SSEGateway, branch main
+//   - Script Path: Jenkinsfile
 
 library identifier: 'JenkinsPipelineUtils', changelog: false
 
-podTemplate(inheritFrom: 'jenkins-agent kaniko', containers: [
-    containerTemplates.k8s('k8s')
-]) {
-    node(POD_LABEL) {
-        def k8sNamespace = kubectl.currentNamespace()
-
-        stage('Cloning repo') {
-            checkout scm
+pipeline {
+    agent {
+        kubernetes {
+            inheritFrom 'jenkins-agent kaniko'
+            yamlMergeStrategy merge()
+            yaml podYaml(templates: ['k8s'])
         }
+    }
 
-        stage('Build validation image') {
-            container('kaniko') {
-                helmCharts.kaniko(
-                    "Dockerfile.validation",
-                    ".",
-                    [
-                        "registry:5000/ssegateway-validation:${currentBuild.number}"
-                    ]
-                )
+    options {
+        // Without abortPrevious: an abort between the stable push and the pin write leaves stable
+        // ahead of the image the deploy repos run.
+        disableConcurrentBuilds()
+        skipDefaultCheckout()
+        timeout(time: 60, unit: 'MINUTES')
+        timestamps()
+    }
+
+    triggers {
+        githubPush()
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
             }
         }
 
-        stage('Run validation') {
-            container('k8s') {
-                def jobName = "ssegateway-validation-${BUILD_NUMBER}"
+        stage('Build ssegateway-validation image') {
+            steps {
+                container('kaniko') {
+                    script {
+                        helmCharts.kaniko2(
+                            dockerfile: 'Dockerfile.validation',
+                            destinations: ["registry:5000/ssegateway-validation:${currentBuild.number}"]
+                        )
+                    }
+                }
+            }
+        }
 
-                try {
-                    kubectl.startJob("""\
-                        apiVersion: batch/v1
-                        kind: Job
-                        metadata:
-                            name: ${jobName}
-                            namespace: ${k8sNamespace}
-                            labels:
-                                app.kubernetes.io/name: ssegateway-validation
-                                app.kubernetes.io/managed-by: jenkins
-                                jenkins/build-number: "${BUILD_NUMBER}"
-                        spec:
-                            backoffLimit: 0
-                            activeDeadlineSeconds: 600
-                            ttlSecondsAfterFinished: 3600
-                            template:
+        stage('Test') {
+            steps {
+                container('k8s') {
+                    script {
+                        String namespace = kubectl.currentNamespace()
+                        String job = "ssegateway-validation-${currentBuild.number}"
+                        try {
+                            kubectl.startJob("""\
+                                apiVersion: batch/v1
+                                kind: Job
+                                metadata:
+                                  name: ${job}
+                                  labels:
+                                    app.kubernetes.io/name: ssegateway-validation
+                                    app.kubernetes.io/managed-by: jenkins
+                                    jenkins/build-number: "${currentBuild.number}"
                                 spec:
-                                    restartPolicy: Never
-                                    containers:
+                                  backoffLimit: 0
+                                  activeDeadlineSeconds: 600
+                                  ttlSecondsAfterFinished: 3600
+                                  template:
+                                    spec:
+                                      restartPolicy: Never
+                                      containers:
                                         - name: validation
                                           image: registry:5000/ssegateway-validation:${currentBuild.number}
                                           imagePullPolicy: Always
                                           resources:
-                                              requests:
-                                                  cpu: "500m"
-                                                  memory: 256Mi
+                                            requests:
+                                              cpu: 500m
+                                              memory: 256Mi
                                         - name: rabbitmq
                                           image: rabbitmq:4.3-management
-                                    volumes: []
-                    """.stripIndent())
+                                """.stripIndent())
+                            kubectl.waitForJobContainer(job, 'validation', namespace)
+                            String pod = kubectl.getJobPodName(job, namespace)
+                            kubectl.savePodLogs(pod, 'validation', namespace, 'validation-raw.log')
 
-                    kubectl.waitForJobContainer(jobName, 'validation', k8sNamespace)
+                            // The suite writes each JUnit file into its log, base64-encoded between
+                            // an ===JUNIT:<file>=== line and an ===JUNIT_END=== line.
+                            sh '''
+                                set -eu
+                                mkdir -p test-results
+                                awk '
+                                    /^===JUNIT:.*===$/ {
+                                        fname = $0
+                                        sub(/^===JUNIT:/, "", fname)
+                                        sub(/===$/, "", fname)
+                                        content = ""
+                                        capture = 1
+                                        next
+                                    }
+                                    /^===JUNIT_END===$/ {
+                                        print content | "base64 -d > test-results/" fname
+                                        close("base64 -d > test-results/" fname)
+                                        capture = 0
+                                        next
+                                    }
+                                    capture { content = content (content ? "\\n" : "") $0 }
+                                    !capture { print }
+                                ' validation-raw.log > validation-stripped.log
+                            '''
+                            utils.cleanLog('validation-stripped.log', 'validation.log')
+                            archiveArtifacts artifacts: 'validation.log, test-results/*.xml', allowEmptyArchive: true
+                            junit testResults: 'test-results/*.xml', allowEmptyResults: true
 
-                    def podName = kubectl.getJobPodName(jobName, k8sNamespace)
-                    kubectl.savePodLogs(podName, 'validation', k8sNamespace, "validation-raw.log")
-
-                    sh 'mkdir -p test-results'
-
-                    sh """
-                        set -euo pipefail
-
-                        awk '
-                            /^===JUNIT:.*===\$/ {
-                                fname = \$0
-                                sub(/^===JUNIT:/, "", fname)
-                                sub(/===\$/, "", fname)
-                                content = ""
-                                capture = 1
-                                next
+                            // scripts/validation-entrypoint.sh ends the log with
+                            // ===SUITE_RESULT:<name>:<passed>:<failed>:<skipped>===.
+                            String result = readFile('validation.log').split('\n').find { it.startsWith('===SUITE_RESULT:') }
+                            if (result) {
+                                String[] counts = result.replace('===SUITE_RESULT:', '').replace('===', '').split(':')
+                                currentBuild.description = "${counts[1]} passed, ${counts[2]} failed, ${counts[3]} skipped"
                             }
-                            /^===JUNIT_END===\$/ {
-                                print content | "base64 -d > test-results/" fname
-                                close("base64 -d > test-results/" fname)
-                                capture = 0
-                                next
+
+                            String exitCode = kubectl.getContainerExitCode(pod, 'validation', namespace)
+                            if (!exitCode) {
+                                String reason = kubectl.getJobFailReason(job, namespace)
+                                error("Validation failed: no exit code (pod ${pod}${reason ? ", reason ${reason}" : ''})")
+                            } else if (exitCode != '0') {
+                                error("Validation failed: exit code ${exitCode}")
                             }
-                            capture { content = content (content ? "\\n" : "") \$0 }
-                            !capture { print }
-                        ' validation-raw.log > validation-stripped.log
-                    """
-                    utils.cleanLog("validation-stripped.log", "validation.log")
-
-                    def exitCode = kubectl.getContainerExitCode(podName, 'validation', k8sNamespace)
-
-                    // Generate summary from SUITE_RESULT markers.
-                    def log = readFile("validation.log")
-                    def resultLine = log.split('\n').find { it.startsWith('===SUITE_RESULT:') }
-                    if (resultLine) {
-                        def parts = resultLine.replace('===SUITE_RESULT:', '').replace('===', '').split(':')
-                        def p = parts[1] as int, f = parts[2] as int, s = parts[3] as int
-                        currentBuild.description = "${p} passed, ${f} failed, ${s} skipped"
+                        } finally {
+                            kubectl.deleteJob(job, namespace)
+                        }
                     }
-
-                    sh 'rm -f validation-raw.log validation-stripped.log'
-
-                    archiveArtifacts artifacts: 'validation.log, test-results/*.xml', allowEmptyArchive: true
-                    junit testResults: 'test-results/*.xml', allowEmptyResults: true
-
-                    if (!exitCode) {
-                        def failReason = kubectl.getJobFailReason(jobName, k8sNamespace)
-                        error("Validation failed: no exit code (pod=${podName}${failReason ? ", reason: ${failReason}" : ""})")
-                    } else if (exitCode != '0') {
-                        error("Validation failed: exit code ${exitCode}")
-                    }
-                } finally {
-                    kubectl.deleteJob(jobName, k8sNamespace)
                 }
             }
         }
 
-        stage("Building SSE Gateway") {
-            container('kaniko') {
-                helmCharts.kaniko([
-                    "registry:5000/ssegateway:${currentBuild.number}",
-                    "registry:5000/ssegateway:latest"
-                ])
+        stage('Build ssegateway image') {
+            steps {
+                container('kaniko') {
+                    script {
+                        helmCharts.kaniko2(destinations: [
+                            "registry:5000/ssegateway:${currentBuild.number}",
+                            'registry:5000/ssegateway:latest',
+                        ])
+                    }
+                }
             }
         }
 
-        stage('Update stable branch') {
-            withCredentials([
-                usernamePassword(
-                    credentialsId: '5f6fbd66-b41c-405f-b107-85ba6fd97f10',
-                    usernameVariable: 'GIT_USER',
-                    passwordVariable: 'GIT_PASS'
-                )
-            ]) {
-                sh '''
-                    git push https://${GIT_USER}:${GIT_PASS}@github.com/pvginkel/SSEGateway.git HEAD:stable
-                '''
+        // The Checkout stage's clone holds no credential to push with, so the push goes from a clone
+        // made inside withCredentials.
+        stage('Push stable branch') {
+            steps {
+                script {
+                    String commit = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    withCredentials([usernamePassword(
+                        credentialsId: '5f6fbd66-b41c-405f-b107-85ba6fd97f10',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN')]) {
+                        sh """
+                            set -eu
+                            git clone --quiet "https://\$GIT_USER:\$GIT_TOKEN@github.com/pvginkel/SSEGateway.git" stable
+                            git -C stable push --quiet origin '${commit}:refs/heads/stable'
+                        """
+                    }
+                }
             }
         }
 
-        // Every consumer gets the image as a pin in its deploy repo (argo-cd D53); the one left
-        // in HelmCharts, design-assistant, is disabled there (D60).
         stage('Write image pins') {
-            container('k8s') {
-                def repos = ['pvginkel/Zigbee2mqttDeploy', 'pvginkel/ElectronicsInventoryDeploy', 'pvginkel/IotDeploy', 'pvginkel/DnsmasqDeploy']
-                for (int i = 0; i < repos.size(); i++) {
-                    cicd.writeVersionPins(repo: repos[i], pins: [
-                        'config/prd/values.yaml': ['images.sseGateway': ":${currentBuild.number}"]
-                    ])
+            steps {
+                container('k8s') {
+                    script {
+                        List<String> repos = [
+                            'pvginkel/Zigbee2mqttDeploy',
+                            'pvginkel/ElectronicsInventoryDeploy',
+                            'pvginkel/IotDeploy',
+                            'pvginkel/DnsmasqDeploy',
+                        ]
+                        for (int i = 0; i < repos.size(); i++) {
+                            cicd.writeVersionPins(repo: repos[i], pins: [
+                                'config/prd/values.yaml': ['images.sseGateway': ":${currentBuild.number}"],
+                            ])
+                        }
+                    }
                 }
             }
         }
+    }
 
+    post {
+        aborted {
+            script {
+                notify.error("${env.JOB_NAME} #${env.BUILD_NUMBER} aborted (timeout or hand)")
+            }
+        }
     }
 }

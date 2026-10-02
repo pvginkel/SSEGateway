@@ -8,7 +8,7 @@
 # installed. Never run npm from the dev container: it is a different Node.
 #
 # Image builds are deliberately NOT wired into `build:`. Jenkins builds both
-# images with helmCharts.kaniko(...), and an npm-install-per-stage image build
+# images with helmCharts.kaniko2(...), and an npm-install-per-stage image build
 # would turn the default `kc project build` sweep into minutes. To build one by
 # hand in this environment (from the repository root):
 #
