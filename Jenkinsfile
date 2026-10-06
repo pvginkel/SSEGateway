@@ -79,10 +79,6 @@ pipeline {
                                         - name: validation
                                           image: registry:5000/ssegateway-validation:${currentBuild.number}
                                           imagePullPolicy: Always
-                                          resources:
-                                            requests:
-                                              cpu: 500m
-                                              memory: 256Mi
                                         - name: rabbitmq
                                           image: rabbitmq:4.3-management
                                 """.stripIndent())
